@@ -1,0 +1,52 @@
+{
+  "model_version": "ml.logistic-recommendation.v3",
+  "feature_version": "events-product-value-features.v1",
+  "model_type": "logistic_regression",
+  "trained_at": "2026-06-03T00:00:00Z",
+  "features": [
+    "view_signal",
+    "cart_signal",
+    "purchase_signal",
+    "buyer_signal",
+    "category_affinity",
+    "previously_viewed",
+    "placement_message",
+    "placement_onsite",
+    "relative_value_signal",
+    "discount_signal",
+    "rating_signal",
+    "review_confidence",
+    "return_quality_signal",
+    "margin_signal"
+  ],
+  "bias": -1.6218,
+  "weights": {
+    "view_signal": 0.1842,
+    "cart_signal": 0.7214,
+    "purchase_signal": 1.0846,
+    "buyer_signal": 0.5523,
+    "category_affinity": 0.9427,
+    "previously_viewed": 0.1428,
+    "placement_message": -0.1214,
+    "placement_onsite": 0.0835,
+    "relative_value_signal": 0.7741,
+    "discount_signal": 0.4382,
+    "rating_signal": 0.6915,
+    "review_confidence": 0.3124,
+    "return_quality_signal": 0.6048,
+    "margin_signal": 0.2573
+  },
+  "metrics": {
+    "auc": 0.8126,
+    "log_loss": 0.3869,
+    "precision_at_5": 0.68,
+    "recall_at_5": 0.52
+  },
+  "training_data": {
+    "source": "offline_event_product_value_labels",
+    "positive_label": "purchase_after_impression",
+    "negative_label": "impression_without_purchase",
+    "sample_count": 128740,
+    "positive_rate": 0.184
+  }
+}

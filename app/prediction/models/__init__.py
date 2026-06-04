@@ -1,0 +1,1 @@
+"""Packaged prediction model artifacts."""

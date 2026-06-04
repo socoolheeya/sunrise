@@ -1,0 +1,13 @@
+visitor_id,product_id,category,view_count,cart_add_count,purchase_count,buyer_count,category_affinity,previously_viewed,placement,price,original_price,category_avg_price,rating,review_count,return_rate,gross_margin,label
+u1,p-shirt,tops,8,3,2,2,1,1,widget,80,120,100,4.7,320,0.03,0.38,1
+u2,p-shirt,tops,7,2,2,2,1,0,onsite,80,120,100,4.7,320,0.03,0.38,1
+u3,p-bag,bags,5,2,1,1,1,1,widget,70,100,95,4.5,180,0.04,0.34,1
+u4,p-shoes,shoes,6,1,1,1,0,0,onsite,110,150,130,4.4,220,0.05,0.31,1
+u5,p-hat,tops,2,0,0,0,1,1,message,95,100,100,3.6,18,0.16,0.18,0
+u6,p-socks,shoes,1,0,0,0,0,0,widget,125,130,130,3.8,12,0.2,0.15,0
+u7,p-belt,bags,1,0,0,0,0,0,message,130,135,95,3.5,8,0.22,0.16,0
+u8,p-scarf,tops,3,0,0,0,0,1,onsite,115,120,100,3.9,20,0.18,0.2,0
+u9,p-coat,outer,10,4,2,2,1,0,widget,150,220,180,4.8,420,0.02,0.42,1
+u10,p-wallet,bags,4,1,1,1,1,1,onsite,75,110,95,4.6,260,0.03,0.36,1
+u11,p-ring,jewelry,1,0,0,0,0,0,widget,180,190,130,3.7,10,0.25,0.14,0
+u12,p-cap,tops,2,0,0,0,0,0,message,118,120,100,3.9,14,0.19,0.17,0

@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sunrise / Sunrise Core Architecture Summary</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --paper: #ffffff;
+      --ink: #18212f;
+      --muted: #5b6675;
+      --line: #d8dee8;
+      --soft: #eef2f7;
+      --blue: #2563eb;
+      --green: #047857;
+      --red: #b42318;
+      --amber: #b45309;
+      --violet: #6d28d9;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+    }
+
+    header {
+      padding: 28px 0 22px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 34px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 42px 0 16px;
+      font-size: 24px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
+    }
+
+    h3 {
+      margin: 26px 0 10px;
+      font-size: 18px;
+    }
+
+    p { margin: 8px 0; }
+
+    code, pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+    }
+
+    pre {
+      overflow-x: auto;
+      background: #101828;
+      color: #eef2ff;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid #26344d;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 24px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+    }
+
+    th {
+      background: var(--soft);
+      font-weight: 700;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .metric {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .metric span {
+      display: block;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .note {
+      background: #fff8eb;
+      border: 1px solid #f2d4a7;
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: #58320a;
+      margin: 14px 0;
+    }
+
+    .diagram-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 14px 0 26px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+
+    .mermaid {
+      background: var(--paper);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0 24px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .small { color: var(--muted); font-size: 14px; }
+
+    @media (max-width: 820px) {
+      main { padding: 24px 14px 48px; }
+      .summary, .two-col { grid-template-columns: 1fr; }
+      h1 { font-size: 27px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Sunrise / Sunrise Core 시스템 요약</h1>
+    <p>
+      이 문서는 현재 개발된 <b>sunrise</b> Python/FastAPI 분석·수집 서비스와
+      <b>sunrise-core</b> Spring Kotlin 운영 코어 서비스를 기준으로 아키텍처,
+      기능별 시퀀스, 실제 연동 방법을 정리한 실행 문서입니다.
+    </p>
+    <div class="summary">
+      <div class="metric"><b>수집 경로</b><span>FastAPI → Kafka → ClickHouse</span></div>
+      <div class="metric"><b>분석/Feature 저장소</b><span>ClickHouse 물리 DB</span></div>
+      <div class="metric"><b>운영 코어</b><span>Spring Kotlin + PostgreSQL</span></div>
+      <div class="metric"><b>추천 랭킹</b><span>ML v3 + 상품 가치 feature</span></div>
+    </div>
+  </header>
+
+  <section>
+    <h2>1. 시스템 역할 분리</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>프로젝트</th>
+          <th>역할</th>
+          <th>주요 모듈</th>
+          <th>저장소/인프라</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>sunrise</b></td>
+          <td>고객 서비스에서 발생한 행동 이벤트를 수집하고, 분석·예측·추천·AI 제안을 제공한다.</td>
+          <td>ingestion, analytics, prediction, recommendation, ai, events, core</td>
+          <td>Kafka/Redpanda, ClickHouse, Redis, PostgreSQL</td>
+        </tr>
+        <tr>
+          <td><b>sunrise-core</b></td>
+          <td>테넌트, API key, 캠페인 상태 전이, 감사 로그, 도메인 이벤트 outbox를 관리한다.</td>
+          <td>tenant, campaign, shared</td>
+          <td>PostgreSQL, Flyway, JPA</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      실운영에서는 <b>sunrise-core</b>가 고객사/테넌트와 운영 리소스를 관리하고,
+      <b>sunrise</b>가 고속 이벤트 수집 및 OLAP 조회를 담당하는 구조가 자연스럽습니다.
+      현재 두 프로젝트는 물리적으로 분리되어 있으며, API key 발급 결과를 sunrise의
+      `SUNRISE_API_KEYS_JSON` 또는 별도 secret/IAM 저장소에 동기화하는 구성이 필요합니다.
+    </p>
+  </section>
+
+  <section>
+    <h2>2. 아키텍처 구성도</h2>
+    <div class="diagram-wrap">
+      <svg width="1120" height="640" viewBox="0 0 1120 640" role="img" aria-label="Sunrise architecture diagram">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#475467"></path>
+          </marker>
+          <style>
+            .box { fill:#fff; stroke:#c7d0dc; stroke-width:1.5; rx:8; }
+            .client { fill:#eef6ff; stroke:#60a5fa; }
+            .api { fill:#ecfdf5; stroke:#34d399; }
+            .stream { fill:#fff7ed; stroke:#fb923c; }
+            .olap { fill:#f5f3ff; stroke:#a78bfa; }
+            .core { fill:#fef2f2; stroke:#f87171; }
+            .cache { fill:#f0fdf4; stroke:#22c55e; }
+            .txt { font: 14px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill:#18212f; }
+            .title { font: 700 15px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill:#18212f; }
+            .smalltxt { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill:#5b6675; }
+            .arrow { stroke:#475467; stroke-width:1.7; fill:none; marker-end:url(#arrow); }
+            .dash { stroke-dasharray:5 5; }
+          </style>
+        </defs>
+
+        <rect x="28" y="32" width="210" height="92" class="box client"></rect>
+        <text x="48" y="64" class="title">고객 서비스</text>
+        <text x="48" y="88" class="smalltxt">예: priviatravel.com</text>
+        <text x="48" y="108" class="smalltxt">웹/앱/백엔드 이벤트 발생</text>
+
+        <rect x="285" y="32" width="230" height="120" class="box api"></rect>
+        <text x="305" y="64" class="title">sunrise FastAPI</text>
+        <text x="305" y="88" class="smalltxt">/v1/collect</text>
+        <text x="305" y="108" class="smalltxt">/v1/analytics/*</text>
+        <text x="305" y="128" class="smalltxt">/v1/audiences, predictions, recommendations</text>
+
+        <rect x="565" y="32" width="220" height="92" class="box stream"></rect>
+        <text x="585" y="64" class="title">Kafka / Redpanda</text>
+        <text x="585" y="88" class="smalltxt">raw.events</text>
+        <text x="585" y="108" class="smalltxt">raw.events.dlq</text>
+
+        <rect x="840" y="28" width="245" height="154" class="box olap"></rect>
+        <text x="860" y="60" class="title">ClickHouse 물리 DB</text>
+        <text x="860" y="84" class="smalltxt">events</text>
+        <text x="860" y="104" class="smalltxt">raw_events_queue(Kafka Engine)</text>
+        <text x="860" y="124" class="smalltxt">agg_metric_daily_v2</text>
+        <text x="860" y="144" class="smalltxt">visitor/product read models</text>
+        <text x="860" y="164" class="smalltxt">product_features_v1</text>
+
+        <rect x="285" y="215" width="230" height="108" class="box cache"></rect>
+        <text x="305" y="247" class="title">Redis Cache</text>
+        <text x="305" y="271" class="smalltxt">analytics response cache</text>
+        <text x="305" y="291" class="smalltxt">TTL: SUNRISE_CACHE_TTL_SECONDS</text>
+
+        <rect x="565" y="215" width="220" height="124" class="box api"></rect>
+        <text x="585" y="247" class="title">ML Artifact Layer</text>
+        <text x="585" y="271" class="smalltxt">prediction_model.json</text>
+        <text x="585" y="291" class="smalltxt">recommendation_ranker.json v3</text>
+        <text x="585" y="311" class="smalltxt">value/quality feature scoring</text>
+
+        <rect x="28" y="430" width="300" height="148" class="box core"></rect>
+        <text x="48" y="462" class="title">sunrise-core Spring Kotlin</text>
+        <text x="48" y="486" class="smalltxt">Tenant / API Key / Campaign</text>
+        <text x="48" y="506" class="smalltxt">AuditRecord / OutboxMessage</text>
+        <text x="48" y="526" class="smalltxt">Flyway + JPA</text>
+
+        <rect x="390" y="430" width="240" height="148" class="box core"></rect>
+        <text x="410" y="462" class="title">PostgreSQL Core DB</text>
+        <text x="410" y="486" class="smalltxt">tenants</text>
+        <text x="410" y="506" class="smalltxt">api_keys</text>
+        <text x="410" y="526" class="smalltxt">campaigns</text>
+        <text x="410" y="546" class="smalltxt">audit_records, outbox_messages</text>
+
+        <rect x="725" y="430" width="300" height="148" class="box client"></rect>
+        <text x="745" y="462" class="title">운영자 / 마케터</text>
+        <text x="745" y="486" class="smalltxt">테넌트 생성</text>
+        <text x="745" y="506" class="smalltxt">API key 발급</text>
+        <text x="745" y="526" class="smalltxt">캠페인 생성/승인/예약/중지</text>
+
+        <path d="M238 78 L285 78" class="arrow"></path>
+        <path d="M515 78 L565 78" class="arrow"></path>
+        <path d="M785 78 L840 78" class="arrow"></path>
+        <path d="M840 152 C730 210 620 220 515 250" class="arrow"></path>
+        <path d="M840 120 C730 160 650 205 625 215" class="arrow"></path>
+        <path d="M515 108 C650 190 740 210 840 154" class="arrow dash"></path>
+        <path d="M725 505 L630 505" class="arrow"></path>
+        <path d="M390 505 L328 505" class="arrow"></path>
+        <path d="M178 430 C190 310 260 210 285 120" class="arrow dash"></path>
+        <path d="M328 470 C430 335 455 250 565 250" class="arrow dash"></path>
+      </svg>
+      <div class="legend">
+        <span class="tag"><span class="dot" style="background:#60a5fa"></span>클라이언트/운영자</span>
+        <span class="tag"><span class="dot" style="background:#34d399"></span>API/애플리케이션</span>
+        <span class="tag"><span class="dot" style="background:#fb923c"></span>스트리밍</span>
+        <span class="tag"><span class="dot" style="background:#a78bfa"></span>OLAP</span>
+        <span class="tag"><span class="dot" style="background:#f87171"></span>Core 운영 DB</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. 주요 기능과 API</h2>
+    <h3>sunrise FastAPI</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>기능</th>
+          <th>Endpoint</th>
+          <th>인증</th>
+          <th>주요 처리</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>이벤트 수집</td>
+          <td><code>POST /v1/collect</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>schema 검증, payload/rate limit, Kafka publish, DLQ</td>
+        </tr>
+        <tr>
+          <td>분석 지표</td>
+          <td><code>GET /v1/analytics/metrics</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>ClickHouse read model 조회, Redis 캐시, CVR/AOV/repeat 계산</td>
+        </tr>
+        <tr>
+          <td>퍼널/코호트/벤치마크</td>
+          <td><code>GET /v1/analytics/funnel|cohort|benchmark</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>이벤트 기반 단계별 전환, 월별 유지, 플랫폼 대비 비교</td>
+        </tr>
+        <tr>
+          <td>예측</td>
+          <td><code>POST /v1/predictions/purchase-score|churn-risk|product-affinity</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>ClickHouse feature repository + ML artifact scoring</td>
+        </tr>
+        <tr>
+          <td>오디언스 템플릿</td>
+          <td><code>GET /v1/audiences/templates</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>50+ 기본 오디언스 catalog, category/query 필터, 조건 DSL rule</td>
+        </tr>
+        <tr>
+          <td>추천 상품 feature</td>
+          <td><code>POST /v1/recommendations/products</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>가격, 할인, 평점, 리뷰, 반품률, 마진, 재고 feature upsert</td>
+        </tr>
+        <tr>
+          <td>추천</td>
+          <td><code>POST /v1/recommendations/items</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>ClickHouse 후보/read model + ML v3 랭커 artifact + 제외 조건</td>
+        </tr>
+        <tr>
+          <td>AI 지원</td>
+          <td><code>POST /v1/ai/diagnoses/site|suggestions/campaigns|copy</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>분석 결과 기반 진단, 캠페인 제안, 카피 생성 가드레일</td>
+        </tr>
+        <tr>
+          <td>온사이트 캠페인</td>
+          <td><code>POST /v1/onsite/decide|impressions|clicks|dismissals</code></td>
+          <td><code>X-Sunrise-Key</code></td>
+          <td>현재 행동 맥락으로 팝업/배너 decision, 노출/클릭/닫기 이벤트 수집</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>sunrise-core Spring Kotlin</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>기능</th>
+          <th>Endpoint</th>
+          <th>필수 헤더</th>
+          <th>저장/이벤트</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>테넌트 생성</td>
+          <td><code>POST /api/tenants</code></td>
+          <td><code>X-Sunrise-Tenant</code>, <code>X-Sunrise-Actor-Id</code></td>
+          <td><code>tenants</code>, audit, outbox</td>
+        </tr>
+        <tr>
+          <td>API key 발급</td>
+          <td><code>POST /api/api-keys</code></td>
+          <td><code>X-Sunrise-Tenant</code>, <code>X-Sunrise-Actor-Id</code></td>
+          <td><code>api_keys</code>, secret hash/prefix, audit, outbox</td>
+        </tr>
+        <tr>
+          <td>캠페인 생성</td>
+          <td><code>POST /api/campaigns</code></td>
+          <td><code>X-Sunrise-Tenant</code>, <code>X-Sunrise-Actor-Id</code></td>
+          <td><code>campaigns</code>, audit, outbox</td>
+        </tr>
+        <tr>
+          <td>캠페인 상태 전이</td>
+          <td><code>POST /api/campaigns/{id}/approve|schedule|pause|resume|cancel</code></td>
+          <td><code>X-Sunrise-Tenant</code>, <code>X-Sunrise-Actor-Id</code></td>
+          <td>도메인 상태 검증, audit, outbox</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>4. 기능별 시퀀스 다이어그램</h2>
+    <h3>4.1 실운영 이벤트 수집</h3>
+    <pre class="mermaid">sequenceDiagram
+    autonumber
+    participant Client as 고객 웹/앱/백엔드
+    participant API as sunrise FastAPI
+    participant Auth as Tenant Resolver
+    participant Kafka as Redpanda raw.events
+    participant CHQ as ClickHouse raw_events_queue
+    participant MV as Materialized Views
+    participant CH as ClickHouse read models
+
+    Client->>API: POST /v1/collect + X-Sunrise-Key
+    API->>Auth: API key로 tenant_id 확인
+    Auth-->>API: tenant-a
+    API->>API: schema_version, event type, size, rate limit 검증
+    API->>Kafka: JSONEachRow event publish
+    Kafka-->>API: ack=all
+    API-->>Client: 202 accepted
+    Kafka-->>CHQ: Kafka Engine consume
+    CHQ-->>MV: tracking-event.v1 rows
+    MV-->>CH: events, agg_metric_daily_v2, visitor/product read models 적재</pre>
+
+    <h3>4.2 분석 조회</h3>
+    <pre class="mermaid">sequenceDiagram
+    autonumber
+    participant User as Dashboard/Postman
+    participant API as sunrise FastAPI
+    participant Cache as Redis
+    participant CH as ClickHouse
+
+    User->>API: GET /v1/analytics/metrics?start&end
+    API->>API: X-Sunrise-Key 검증 및 tenant scope 결정
+    API->>Cache: analytics-response.v1 cache key 조회
+    alt cache hit
+      Cache-->>API: cached JSON
+    else cache miss
+      API->>CH: agg_metric_daily_v2 + events 조회
+      CH-->>API: visitor/purchase/revenue/repeat rows
+      API->>API: CVR, AOV, repeat_rate 계산
+      API->>Cache: TTL 저장
+    end
+    API-->>User: DashboardResponse</pre>
+
+    <h3>4.3 예측/추천 및 상품 가치 feature</h3>
+    <pre class="mermaid">sequenceDiagram
+    autonumber
+    participant User as 운영 화면/API Client
+    participant API as sunrise FastAPI
+    participant CH as ClickHouse feature read models
+    participant PF as product_features_v1
+    participant Model as ML Artifact Registry
+
+    User->>API: POST /v1/predictions/purchase-score
+    API->>CH: visitor_features_daily_v2 조회
+    API->>Model: prediction_model.json 로드
+    Model-->>API: logistic scoring heads
+    API-->>User: visitor별 purchase/churn/affinity score
+
+    User->>API: GET /v1/audiences/templates?category=cart
+    API-->>User: 50+ 템플릿 catalog 중 장바구니 템플릿 목록
+
+    User->>API: POST /v1/recommendations/products
+    API->>PF: 가격/정가/마진/평점/리뷰/반품률/재고 upsert
+    PF-->>API: accepted count
+
+    User->>API: POST /v1/recommendations/items
+    API->>CH: product_stats_daily_v2 + visitor_product_signals_daily_v2 조회
+    API->>PF: 최신 상품 가치/품질 feature join
+    API->>Model: recommendation_ranker.json v3 로드
+    Model-->>API: sigmoid 기반 ranking score
+    API-->>User: 추천 상품 목록</pre>
+
+    <h3>4.4 온사이트 캠페인 Decision</h3>
+    <pre class="mermaid">sequenceDiagram
+    autonumber
+    participant SDK as 고객사 Onsite SDK
+    participant API as sunrise FastAPI
+    participant Rec as Recommendation Engine
+    participant Collect as Tracking Collector
+    participant Kafka as Redpanda raw.events
+    participant CH as ClickHouse
+
+    SDK->>API: POST /v1/onsite/decide(current_event, recent behavior)
+    API->>Rec: placement=onsite 추천 조회
+    Rec-->>API: 추천 상품 + score
+    API->>API: trigger 평가(cart_recovery, exit_intent, browse_assist)
+    API-->>SDK: decision_id, campaign_id, creative, items
+    SDK->>API: POST /v1/onsite/impressions
+    API->>Collect: campaign_impression event 생성
+    Collect->>Kafka: raw.events publish
+    Kafka-->>CH: Materialized View 적재
+    SDK->>API: POST /v1/onsite/clicks 또는 dismissals</pre>
+
+    <h3>4.5 테넌트/API key 발급</h3>
+    <pre class="mermaid">sequenceDiagram
+    autonumber
+    participant Admin as 운영자
+    participant Core as sunrise-core API
+    participant UseCase as Tenant/ApiKey UseCase
+    participant DB as PostgreSQL
+    participant Outbox as outbox_messages
+
+    Admin->>Core: POST /api/tenants
+    Core->>Core: X-Sunrise-Tenant, Actor headers 확인
+    Core->>UseCase: CreateTenantCommand
+    UseCase->>DB: tenants 저장
+    UseCase->>DB: audit_records 저장
+    UseCase->>Outbox: TenantCreatedEvent 저장
+    Core-->>Admin: 201 TenantResponse
+
+    Admin->>Core: POST /api/api-keys
+    Core->>UseCase: CreateApiKeyCommand(scopes, expiresAt)
+    UseCase->>UseCase: secret 생성, hash/prefix 분리
+    UseCase->>DB: api_keys 저장
+    UseCase->>DB: audit_records 저장
+    UseCase->>Outbox: ApiKeyCreatedEvent 저장
+    Core-->>Admin: 201 secret + apiKey metadata</pre>
+
+    <h3>4.6 캠페인 생성/승인/예약</h3>
+    <pre class="mermaid">sequenceDiagram
+    autonumber
+    participant Marketer as 마케터
+    participant Core as sunrise-core API
+    participant Campaign as Campaign UseCase
+    participant DB as PostgreSQL
+    participant Outbox as outbox_messages
+
+    Marketer->>Core: POST /api/campaigns
+    Core->>Campaign: CreateCampaignCommand
+    Campaign->>DB: campaigns(DRAFT) 저장
+    Campaign->>DB: audit_records 저장
+    Campaign->>Outbox: CampaignCreatedEvent 저장
+    Core-->>Marketer: CampaignResponse
+
+    Marketer->>Core: POST /api/campaigns/{id}/approve
+    Core->>Campaign: ApproveCampaignCommand(audienceSnapshotId)
+    Campaign->>DB: tenant + campaign id로 조회
+    Campaign->>Campaign: 도메인 상태 전이 검증
+    Campaign->>DB: campaigns 업데이트
+    Campaign->>DB: audit_records 저장
+    Campaign->>Outbox: CampaignApprovedEvent 저장
+    Core-->>Marketer: CampaignResponse(APPROVED)</pre>
+  </section>
+
+  <section>
+    <h2>5. 실제 연동 방법</h2>
+    <div class="note">
+      고객사가 <b>https://www.priviatravel.com/</b>이라고 가정하면, 무단 크롤링 방식이 아니라
+      고객사 웹/앱/백엔드에서 발생한 합법적 1st-party 이벤트를 Sunrise 수집 API로 전송해야 합니다.
+      개인정보 고지, 동의, 보존 정책, PII 비식별 처리는 고객사 운영 정책에 포함되어야 합니다.
+    </div>
+
+    <h3>5.1 로컬 compose 실행</h3>
+    <pre><code>docker compose up -d --build
+docker compose ps</code></pre>
+    <p>현재 로컬 compose는 <code>.env</code>의 값을 사용합니다. 기본 API key는 <code>test-prod-key</code>이고 tenant는 <code>tenant-a</code>입니다.</p>
+
+    <h3>5.2 ClickHouse 물리 DB 확인</h3>
+    <pre><code>bash docs/api/clickhouse_smoke.sh</code></pre>
+    <pre><code>docker compose exec -T clickhouse clickhouse-client \
+  --user sunrise \
+  --password test-clickhouse-password \
+  --database sunrise \
+  --query "SELECT name, engine FROM system.tables WHERE database = currentDatabase() ORDER BY name"</code></pre>
+
+    <h3>5.3 운영 이벤트 전송 예시</h3>
+    <pre><code>curl -X POST "https://sunrise-api.example.com/v1/collect" \
+  -H "Content-Type: application/json" \
+  -H "X-Sunrise-Key: privia-prod-key" \
+  -d '{
+    "schema_version": "tracking-event.v1",
+    "events": [
+      {
+        "event_id": "privia-booking-20260603-0001",
+        "visitor_id": "anon-visitor-123",
+        "type": "purchase",
+        "product_id": "hotel-98765",
+        "category": "hotel",
+        "amount": 250000,
+        "occurred_at": "2026-06-03T12:00:00Z"
+      }
+    ]
+  }'</code></pre>
+
+    <h3>5.4 분석 조회 예시</h3>
+    <pre><code>curl "https://sunrise-api.example.com/v1/analytics/metrics?start=2026-06-01T00:00:00Z&amp;end=2026-06-04T00:00:00Z" \
+  -H "X-Sunrise-Key: privia-prod-key"</code></pre>
+
+    <h3>5.5 오디언스 템플릿 조회 예시</h3>
+    <pre><code>curl "https://sunrise-api.example.com/v1/audiences/templates?category=cart" \
+  -H "X-Sunrise-Key: privia-prod-key"</code></pre>
+    <p>
+      응답은 <code>audience-template-catalog.v1</code> catalog 버전, 템플릿 수,
+      각 템플릿의 조건 DSL <code>rule</code>, 추천 채널, 추천 trigger를 포함합니다.
+    </p>
+
+    <h3>5.6 추천 상품 가치 feature 업서트 예시</h3>
+    <pre><code>curl -X POST "https://sunrise-api.example.com/v1/recommendations/products" \
+  -H "Content-Type: application/json" \
+  -H "X-Sunrise-Key: privia-prod-key" \
+  -d '{
+    "products": [
+      {
+        "product_id": "hotel-98765",
+        "category": "hotel",
+        "price": 220000,
+        "original_price": 280000,
+        "gross_margin": 0.34,
+        "rating": 4.7,
+        "review_count": 842,
+        "return_rate": 0.02,
+        "in_stock": true
+      }
+    ]
+  }'</code></pre>
+    <p>
+      이 API는 CRM 행동 데이터만으로 알 수 없는 상품의 가성비/품질 신호를 추천 랭킹에 공급합니다.
+      운영 모드에서는 ClickHouse <code>product_features_v1</code>에 저장되고,
+      추천 조회 시 <code>product_stats_daily_v2</code> 후보와 join됩니다.
+    </p>
+
+    <h3>5.7 추천 조회 예시</h3>
+    <pre><code>curl -X POST "https://sunrise-api.example.com/v1/recommendations/items?start=2026-06-01T00:00:00Z&amp;end=2026-06-04T00:00:00Z" \
+  -H "Content-Type: application/json" \
+  -H "X-Sunrise-Key: privia-prod-key" \
+  -d '{
+    "visitor_id": "anon-visitor-123",
+    "placement": "widget",
+    "limit": 5,
+    "exclude_purchased": true,
+    "exclude_out_of_stock": true
+  }'</code></pre>
+
+    <h3>5.8 온사이트 캠페인 Decision 예시</h3>
+    <pre><code>curl -X POST "https://sunrise-api.example.com/v1/onsite/decide?start=2026-06-01T00:00:00Z&amp;end=2026-06-04T00:00:00Z" \
+  -H "Content-Type: application/json" \
+  -H "X-Sunrise-Key: privia-prod-key" \
+  -d '{
+    "visitor_id": "anon-visitor-123",
+    "current_event": "exit_intent",
+    "page_url": "https://www.priviatravel.com/cart",
+    "placement": "popup",
+    "recent": {
+      "viewed_product_ids": ["hotel-98765"],
+      "cart_product_ids": ["hotel-98765"],
+      "purchased_product_ids": []
+    },
+    "limit": 3
+  }'</code></pre>
+    <p>
+      응답이 <code>eligible=true</code>이면 SDK는 <code>creative</code>와 <code>items</code>를 사용해
+      팝업/배너를 노출하고, 이어서 <code>/v1/onsite/impressions</code>,
+      <code>/v1/onsite/clicks</code>, <code>/v1/onsite/dismissals</code>로 성과 이벤트를 보냅니다.
+    </p>
+
+    <h3>5.9 Postman 사용</h3>
+    <p>
+      <code>docs/api/sunrise.postman_collection.json</code>을 import한 뒤 컬렉션 변수
+      <code>sunrise_api_key</code>를 실제 API key로 설정합니다. 기존 Postman Environment에
+      <code>api_key</code>가 있어도 영향을 받지 않도록 컬렉션 변수명을 분리했습니다.
+    </p>
+    <ol>
+      <li><code>base_url</code>: 로컬은 <code>http://127.0.0.1:8000</code>, 운영은 API 도메인</li>
+      <li><code>sunrise_api_key</code>: 로컬은 <code>test-prod-key</code>, 운영은 고객사 key</li>
+      <li><code>Ingestion &gt; Collect Seed Events</code> 실행</li>
+      <li><code>Ingestion &gt; Wait for Kafka to ClickHouse</code> 실행</li>
+      <li><code>Audience &gt; Templates</code> 또는 <code>Cart Templates</code> 실행</li>
+      <li><code>Recommendation &gt; Upsert Product Value Features</code> 실행</li>
+      <li><code>Onsite &gt; Decide Campaign</code> 및 tracking 요청 실행</li>
+      <li>Analytics/Prediction/Recommendation/AI 요청 실행</li>
+    </ol>
+
+    <h3>5.10 sunrise-core API key 발급 예시</h3>
+    <pre><code>curl -X POST "http://localhost:8080/api/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "X-Sunrise-Tenant: tenant-a" \
+  -H "X-Sunrise-Actor-Id: admin-1" \
+  -H "X-Sunrise-Actor-Type: USER" \
+  -d '{
+    "name": "Privia production ingest key",
+    "scopes": ["INGEST", "READ_ANALYTICS"],
+    "expiresAt": "2027-06-03T00:00:00Z"
+  }'</code></pre>
+    <p>
+      <code>sunrise-core</code>가 반환하는 <code>secret</code>은 최초 1회만 노출되는 값으로 다뤄야 합니다.
+      현재 <code>sunrise</code>는 환경변수 JSON 기반 API key 매핑을 사용하므로, 실제 운영에서는
+      core의 key 저장소와 sunrise 인증 계층을 Secret Manager/IAM/DB 조회 방식으로 연결하는 후속 작업이 필요합니다.
+    </p>
+  </section>
+
+  <section>
+    <h2>6. 운영 체크리스트</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>영역</th>
+          <th>현재 구현</th>
+          <th>운영 시 확인</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>인증</td>
+          <td><code>X-Sunrise-Key</code> → tenant_id 매핑, core는 API key hash/prefix 저장</td>
+          <td>정적 env JSON 대신 Secret Manager 또는 core DB 연동, rotation/revoke 반영</td>
+        </tr>
+        <tr>
+          <td>수집 안정성</td>
+          <td>payload size limit, rate limit, Kafka retry, DLQ topic</td>
+          <td>API gateway 제한, tenant별 quota, DLQ 알림/재처리 운영</td>
+        </tr>
+        <tr>
+          <td>OLAP</td>
+          <td>ClickHouse Kafka Engine, Materialized View, daily read model, product_features_v1</td>
+          <td>replication, retention, partition TTL, feature schema migration 정책</td>
+        </tr>
+        <tr>
+          <td>ML</td>
+          <td>JSON artifact 기반 prediction scoring, recommendation_ranker v3 logistic ranking</td>
+          <td>모델 registry, offline training data pipeline, A/B 검증, drift monitoring</td>
+        </tr>
+        <tr>
+          <td>추천 상품 가치</td>
+          <td><code>/v1/recommendations/products</code>로 가격/할인/평점/리뷰/반품률/마진/재고 upsert</td>
+          <td>상품 카탈로그/PIM/예약 재고 시스템과 자동 동기화, 품질 feature freshness SLA</td>
+        </tr>
+        <tr>
+          <td>온사이트 실행</td>
+          <td><code>/v1/onsite/decide</code>, impression/click/dismiss 수집 API</td>
+          <td>활성 캠페인 저장소, frequency cap 저장소, 실험군 배정, 프론트 SDK 연동</td>
+        </tr>
+        <tr>
+          <td>오디언스</td>
+          <td><code>/v1/audiences/templates</code>로 50+ 기본 템플릿 catalog 제공</td>
+          <td>조건 DSL 편집기, 실시간 모수 preview, snapshot materialization 연동</td>
+        </tr>
+        <tr>
+          <td>개인정보</td>
+          <td>visitor_id 문자열만 계약상 요구</td>
+          <td>PII 직접 저장 금지, consent, 삭제 요청, 보존 기간 정책</td>
+        </tr>
+        <tr>
+          <td>관측성</td>
+          <td><code>/ops/metrics</code> ingestion counters</td>
+          <td>Prometheus/OpenTelemetry, Kafka lag, ClickHouse insert/query 알림</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>7. 현재 검증 상태</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>검증</th>
+          <th>결과</th>
+          <th>의미</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>venv/bin/python -m pytest -q</code></td>
+          <td>90 passed</td>
+          <td>도메인, HTTP, ClickHouse fake adapter, training contract 테스트 통과</td>
+        </tr>
+        <tr>
+          <td><code>venv/bin/python -m compileall app tests</code></td>
+          <td>success</td>
+          <td>Python 문법/ import 컴파일 확인</td>
+        </tr>
+        <tr>
+          <td><code>docker compose build app</code></td>
+          <td>success</td>
+          <td>운영 이미지에 app, migrations, clickhouse DDL, ML artifact 포함</td>
+        </tr>
+        <tr>
+          <td><code>docker compose up -d app</code></td>
+          <td>success</td>
+          <td>PostgreSQL, Redis, Redpanda, ClickHouse, FastAPI 기동 확인</td>
+        </tr>
+        <tr>
+          <td><code>docs/api/curl_smoke.sh</code></td>
+          <td>success</td>
+          <td>수집, 분석, 오디언스, 예측, 상품 feature upsert, 추천, 온사이트, AI API end-to-end 확인</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="small">
+      로컬 Postman 검증은 <code>docs/api/sunrise.postman_collection.json</code>을 사용합니다.
+      컬렉션 기본 API key는 <code>test-prod-key</code>이며, Recommendation 폴더의
+      <code>Upsert Product Value Features</code> 요청을 추천 조회 전에 실행합니다.
+    </p>
+  </section>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, securityLevel: "strict", theme: "default" });
+</script>
+</body>
+</html>

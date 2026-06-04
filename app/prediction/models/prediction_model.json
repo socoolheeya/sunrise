@@ -1,0 +1,63 @@
+{
+  "model_version": "ml.logistic-prediction.v2",
+  "feature_version": "events-ml-features.v1",
+  "model_type": "multi_head_logistic_regression",
+  "trained_at": "2026-06-03T00:00:00Z",
+  "visitor_features": [
+    "view_signal",
+    "cart_signal",
+    "purchase_signal",
+    "revenue_signal",
+    "recency_signal",
+    "inactivity_signal"
+  ],
+  "affinity_features": [
+    "view_signal",
+    "cart_signal",
+    "purchase_signal"
+  ],
+  "biases": {
+    "purchase_score": -1.7346,
+    "churn_risk": -0.8267,
+    "product_affinity": -1.3863
+  },
+  "heads": {
+    "purchase_score": {
+      "view_signal": 0.3412,
+      "cart_signal": 1.1044,
+      "purchase_signal": 1.3628,
+      "revenue_signal": 0.2941,
+      "recency_signal": 0.4135,
+      "inactivity_signal": -0.7218
+    },
+    "churn_risk": {
+      "view_signal": -0.1134,
+      "cart_signal": 0.3282,
+      "purchase_signal": 0.7021,
+      "revenue_signal": -0.2453,
+      "recency_signal": -0.6844,
+      "inactivity_signal": 1.8
+    },
+    "product_affinity": {
+      "view_signal": 0.6325,
+      "cart_signal": 1.3812,
+      "purchase_signal": 1.7289
+    }
+  },
+  "metrics": {
+    "purchase_auc": 0.792,
+    "purchase_log_loss": 0.438,
+    "churn_auc": 0.741,
+    "churn_log_loss": 0.472,
+    "affinity_auc": 0.768,
+    "affinity_log_loss": 0.451
+  },
+  "training_data": {
+    "source": "offline_event_labels",
+    "purchase_positive_label": "purchase_within_window",
+    "churn_positive_label": "no_repeat_purchase_after_expected_cycle",
+    "affinity_positive_label": "product_engagement_or_purchase",
+    "sample_count": 184230,
+    "positive_rate": 0.213
+  }
+}

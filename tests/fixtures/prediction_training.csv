@@ -1,0 +1,11 @@
+view_count,cart_add_count,purchase_count,revenue,days_since_seen,days_since_purchase,product_view_count,product_cart_add_count,product_purchase_count,purchase_label,churn_label,affinity_label
+8,3,1,120,1,1,6,2,1,1,0,1
+6,2,0,0,2,365,5,1,0,1,0,1
+3,1,0,0,4,365,3,1,0,0,0,1
+1,0,0,0,8,365,1,0,0,0,0,0
+0,0,0,0,30,365,0,0,0,0,0,0
+2,0,1,80,65,65,2,0,1,0,1,1
+4,1,2,220,80,80,4,1,2,0,1,1
+1,0,1,40,95,95,1,0,1,0,1,0
+7,4,0,0,1,365,7,3,0,1,0,1
+0,0,1,30,120,120,0,0,1,0,1,0

@@ -1,0 +1,513 @@
+{
+  "info": {
+    "name": "Sunrise Python API",
+    "description": "PRD Python API smoke collection. Import into Postman and run against local docker compose app.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "sunrise_api_key",
+      "value": "test-prod-key"
+    },
+    {
+      "key": "ingestion_wait_ms",
+      "value": "3000"
+    },
+    {
+      "key": "start",
+      "value": "2026-06-01T00:00:00Z"
+    },
+    {
+      "key": "end",
+      "value": "2026-06-04T00:00:00Z"
+    }
+  ],
+  "auth": {
+    "type": "noauth"
+  },
+  "item": [
+    {
+      "name": "Ops",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/healthz"
+          }
+        },
+        {
+          "name": "Ready",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/readyz"
+          }
+        },
+        {
+          "name": "Metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/ops/metrics"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ingestion",
+      "item": [
+        {
+          "name": "Collect Seed Events",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"tracking-event.v1\",\n  \"events\": [\n    {\"event_id\": \"pm-seed-001\", \"visitor_id\": \"v1\", \"type\": \"view\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"occurred_at\": \"2026-06-01T09:00:00Z\"},\n    {\"event_id\": \"pm-seed-002\", \"visitor_id\": \"v1\", \"type\": \"cart_add\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"occurred_at\": \"2026-06-01T09:05:00Z\"},\n    {\"event_id\": \"pm-seed-003\", \"visitor_id\": \"v1\", \"type\": \"purchase\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"amount\": 120, \"occurred_at\": \"2026-06-01T09:10:00Z\"},\n    {\"event_id\": \"pm-seed-004\", \"visitor_id\": \"v2\", \"type\": \"view\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"occurred_at\": \"2026-06-01T10:00:00Z\"},\n    {\"event_id\": \"pm-seed-005\", \"visitor_id\": \"v2\", \"type\": \"cart_add\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"occurred_at\": \"2026-06-01T10:05:00Z\"},\n    {\"event_id\": \"pm-seed-006\", \"visitor_id\": \"v3\", \"type\": \"view\", \"product_id\": \"p-shoes\", \"category\": \"shoes\", \"occurred_at\": \"2026-06-02T11:00:00Z\"},\n    {\"event_id\": \"pm-seed-007\", \"visitor_id\": \"v4\", \"type\": \"view\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"occurred_at\": \"2026-06-02T12:00:00Z\"},\n    {\"event_id\": \"pm-seed-008\", \"visitor_id\": \"v4\", \"type\": \"purchase\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"amount\": 80, \"occurred_at\": \"2026-06-02T12:20:00Z\"},\n    {\"event_id\": \"pm-seed-009\", \"visitor_id\": \"v4\", \"type\": \"purchase\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"amount\": 200, \"occurred_at\": \"2026-06-03T12:20:00Z\"}\n  ]\n}"
+            },
+            "url": "{{base_url}}/v1/collect"
+          }
+        },
+        {
+          "name": "Wait for Kafka to ClickHouse",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const waitMs = Number(pm.collectionVariables.get('ingestion_wait_ms') || 3000);",
+                  "const startedAt = Date.now();",
+                  "while (Date.now() - startedAt < waitMs) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/healthz"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "item": [
+        {
+          "name": "Metrics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/metrics?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Funnel",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/funnel?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Cohort",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/cohort?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Benchmark",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/benchmark?start={{start}}&end={{end}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Audience",
+      "item": [
+        {
+          "name": "Templates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/audiences/templates"
+          }
+        },
+        {
+          "name": "Cart Templates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/audiences/templates?category=cart"
+          }
+        },
+        {
+          "name": "Purchase Score Templates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/audiences/templates?query=구매가능성"
+          }
+        },
+        {
+          "name": "Template Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/audiences/templates/cart_added_no_purchase_24h"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Prediction",
+      "item": [
+        {
+          "name": "Purchase Score",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_ids\": [\"v1\", \"v2\", \"v3\", \"unknown\"]\n}"
+            },
+            "url": "{{base_url}}/v1/predictions/purchase-score?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Churn Risk",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_ids\": [\"v1\", \"v2\", \"v4\", \"unknown\"]\n}"
+            },
+            "url": "{{base_url}}/v1/predictions/churn-risk?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Product Affinity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_id\": \"v1\",\n  \"keys\": [\"p-shirt\", \"tops\", \"p-bag\"]\n}"
+            },
+            "url": "{{base_url}}/v1/predictions/product-affinity?start={{start}}&end={{end}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Recommendation",
+      "item": [
+        {
+          "name": "Upsert Product Value Features",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"products\": [\n    {\"product_id\": \"p-shirt\", \"category\": \"tops\", \"price\": 80, \"original_price\": 120, \"gross_margin\": 0.38, \"rating\": 4.7, \"review_count\": 320, \"return_rate\": 0.03, \"in_stock\": true},\n    {\"product_id\": \"p-bag\", \"category\": \"bags\", \"price\": 70, \"original_price\": 100, \"gross_margin\": 0.35, \"rating\": 4.6, \"review_count\": 250, \"return_rate\": 0.03, \"in_stock\": true},\n    {\"product_id\": \"p-shoes\", \"category\": \"shoes\", \"price\": 125, \"original_price\": 130, \"gross_margin\": 0.15, \"rating\": 3.8, \"review_count\": 12, \"return_rate\": 0.2, \"in_stock\": false}\n  ]\n}"
+            },
+            "url": "{{base_url}}/v1/recommendations/products"
+          }
+        },
+        {
+          "name": "Recommend Items",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_id\": \"v1\",\n  \"placement\": \"widget\",\n  \"limit\": 5,\n  \"exclude_purchased\": true,\n  \"exclude_out_of_stock\": true,\n  \"out_of_stock\": [\"p-shoes\"]\n}"
+            },
+            "url": "{{base_url}}/v1/recommendations/items?start={{start}}&end={{end}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Onsite",
+      "item": [
+        {
+          "name": "Decide Campaign",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_id\": \"v1\",\n  \"current_event\": \"exit_intent\",\n  \"page_url\": \"https://shop.example/cart\",\n  \"placement\": \"popup\",\n  \"recent\": {\n    \"viewed_product_ids\": [\"p-shirt\"],\n    \"cart_product_ids\": [\"p-shirt\"],\n    \"purchased_product_ids\": []\n  },\n  \"limit\": 3\n}"
+            },
+            "url": "{{base_url}}/v1/onsite/decide?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Track Impression",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision_id\": \"postman-decision-1\",\n  \"campaign_id\": \"onsite-cart_recovery-v1\",\n  \"visitor_id\": \"v1\",\n  \"product_id\": \"p-shirt\",\n  \"category\": \"tops\"\n}"
+            },
+            "url": "{{base_url}}/v1/onsite/impressions"
+          }
+        },
+        {
+          "name": "Track Click",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision_id\": \"postman-decision-1\",\n  \"campaign_id\": \"onsite-cart_recovery-v1\",\n  \"visitor_id\": \"v1\",\n  \"product_id\": \"p-shirt\",\n  \"category\": \"tops\"\n}"
+            },
+            "url": "{{base_url}}/v1/onsite/clicks"
+          }
+        },
+        {
+          "name": "Track Dismissal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision_id\": \"postman-decision-1\",\n  \"campaign_id\": \"onsite-cart_recovery-v1\",\n  \"visitor_id\": \"v1\",\n  \"product_id\": \"p-shirt\",\n  \"category\": \"tops\"\n}"
+            },
+            "url": "{{base_url}}/v1/onsite/dismissals"
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI",
+      "item": [
+        {
+          "name": "Site Diagnosis",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"focus\": \"conversion\"\n}"
+            },
+            "url": "{{base_url}}/v1/ai/diagnoses/site?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Campaign Suggestions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preferred_channels\": [\"kakao\", \"onsite\"],\n  \"max_suggestions\": 3\n}"
+            },
+            "url": "{{base_url}}/v1/ai/suggestions/campaigns?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "AI Copy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"brand_tone\": \"friendly\",\n  \"campaign_goal\": \"recover abandoned carts\",\n  \"product_name\": \"Linen Shirt\",\n  \"product_text\": \"Lightweight summer shirt\",\n  \"image_url\": \"https://example.com/shirt.jpg\",\n  \"count\": 2\n}"
+            },
+            "url": "{{base_url}}/v1/ai/copy"
+          }
+        },
+        {
+          "name": "AI Copy - Guardrail Example",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"brand_tone\": \"friendly\",\n  \"campaign_goal\": \"guaranteed risk-free sale\",\n  \"product_name\": \"Serum\",\n  \"count\": 1\n}"
+            },
+            "url": "{{base_url}}/v1/ai/copy"
+          }
+        }
+      ]
+    }
+  ]
+}

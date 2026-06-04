@@ -1,0 +1,136 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${SUNRISE_POSTGRES_USER:?Set SUNRISE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${SUNRISE_POSTGRES_PASSWORD:?Set SUNRISE_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${SUNRISE_POSTGRES_DB:?Set SUNRISE_POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: ${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${SUNRISE_CLICKHOUSE_USER:?Set SUNRISE_CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${SUNRISE_CLICKHOUSE_PASSWORD:?Set SUNRISE_CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Kafka 호환 브로커(Redpanda). 컨테이너 내부는 redpanda:29092, 호스트는 localhost:9092.
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # raw.events / DLQ 토픽을 명시적으로 생성하는 1회성 서비스.
+  redpanda-init:
+    image: redpandadata/redpanda:v24.2.7
+    entrypoint: /bin/sh
+    command: >
+      -c "
+      rpk topic create raw.events --partitions 12 --replicas 1 --brokers redpanda:29092 || true;
+      rpk topic create raw.events.dlq --partitions 3 --replicas 1 --brokers redpanda:29092 || true;
+      rpk topic alter-config raw.events --set retention.ms=604800000 --brokers redpanda:29092 || true;
+      rpk topic alter-config raw.events.dlq --set retention.ms=2592000000 --brokers redpanda:29092 || true
+      "
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: "no"
+
+  # 토픽/메시지 확인용 웹 콘솔: http://localhost:8080
+  redpanda-console:
+    image: redpandadata/console:v2.7.2
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+    ports:
+      - "8080:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  app:
+    build: .
+    environment:
+      SUNRISE_DEPLOYMENT_ENV: production
+      SUNRISE_DATABASE_URL: postgresql+asyncpg://${SUNRISE_POSTGRES_USER:?Set SUNRISE_POSTGRES_USER}:${SUNRISE_POSTGRES_PASSWORD:?Set SUNRISE_POSTGRES_PASSWORD}@db:5432/${SUNRISE_POSTGRES_DB:?Set SUNRISE_POSTGRES_DB}
+      SUNRISE_REDIS_URL: redis://redis:6379/0
+      SUNRISE_API_KEYS: ${SUNRISE_API_KEYS_JSON:?Set SUNRISE_API_KEYS_JSON}
+      SUNRISE_ANALYTICS_BACKEND: clickhouse
+      SUNRISE_CLICKHOUSE_DSN: clickhouse://${SUNRISE_CLICKHOUSE_USER:?Set SUNRISE_CLICKHOUSE_USER}:${SUNRISE_CLICKHOUSE_PASSWORD:?Set SUNRISE_CLICKHOUSE_PASSWORD}@clickhouse:8123/${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}
+      SUNRISE_CLICKHOUSE_EVENTS_TABLE: ${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}.events
+      SUNRISE_CLICKHOUSE_METRIC_DAILY_TABLE: ${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}.agg_metric_daily_v2
+      SUNRISE_CLICKHOUSE_VISITOR_FEATURES_TABLE: ${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}.visitor_features_daily_v2
+      SUNRISE_CLICKHOUSE_PRODUCT_STATS_TABLE: ${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}.product_stats_daily_v2
+      SUNRISE_CLICKHOUSE_PRODUCT_FEATURES_TABLE: ${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}.product_features_v1
+      SUNRISE_CLICKHOUSE_VISITOR_PRODUCT_SIGNALS_TABLE: ${SUNRISE_CLICKHOUSE_DB:?Set SUNRISE_CLICKHOUSE_DB}.visitor_product_signals_daily_v2
+      SUNRISE_CLICKHOUSE_MIRROR_INGESTION: "false"
+      # 운영 경로: 스키마는 Alembic 마이그레이션으로 관리(기동 시 자동 생성 비활성).
+      SUNRISE_AUTO_CREATE_TABLES: "false"
+      SUNRISE_KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+      SUNRISE_INGESTION_SINK: kafka
+    # 마이그레이션을 적용한 뒤 앱을 기동한다.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  clickhouse-data:
+  redpanda-data:

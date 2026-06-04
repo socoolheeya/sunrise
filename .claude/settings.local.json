@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_kafka_ingestion.py -q)",
+      "Bash(docker info *)",
+      "Bash(export SUNRISE_DATABASE_URL=\"postgresql+asyncpg://sunrise:sunrise@localhost:5432/sunrise\")",
+      "Bash(.venv/bin/alembic current *)",
+      "Bash(docker compose *)",
+      "Bash(export SUNRISE_ANALYTICS_BACKEND=sql)",
+      "Bash(export SUNRISE_AUTO_CREATE_TABLES=false)",
+      "Bash(export SUNRISE_API_KEYS='{\"demo-key\": \"demo-tenant\"}')",
+      "Bash(.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000)",
+      "Bash(echo \"started pid $!\")",
+      "Bash(sed -n '1,80p' app/events/schemas.py)",
+      "Bash(sed -n '184,215p' app/analytics/adapters/http.py)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/v1/collect -H 'Content-Type: application/json' -H 'X-Datarize-Key: demo-key' -d '{ *)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/v1/collect -H 'Content-Type: application/json' -H 'X-Datarize-Key: demo-key' -d '{\"events\":[{\"event_id\":\"e1\",\"visitor_id\":\"v1\",\"type\":\"view\",\"product_id\":\"p1\",\"category\":\"shoes\"}]}')",
+      "Bash(curl -s \"http://127.0.0.1:8000/v1/analytics/metrics\" -H \"X-Datarize-Key: demo-key\")",
+      "Bash(pkill -f \"uvicorn app.main:app\")",
+      "Bash(sed -i '' -e 's/X-Datarize-Key/X-Sunrise-Key/g' .claude/settings.local.json)",
+      "Bash(python -c \"import json; json.load\\(open\\('.claude/settings.local.json'\\)\\); print\\('OK: valid JSON'\\)\")",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(export SUNRISE_ANALYTICS_BACKEND=sql SUNRISE_AUTO_CREATE_TABLES=false SUNRISE_API_KEYS='{\"demo-key\": \"demo-tenant\"}')",
+      "Bash(curl -s -X POST localhost:8000/v1/collect -H 'Content-Type: application/json' -H 'X-Sunrise-Key: demo-key' -d '{\"events\":[ *)",
+      "Bash(curl -s -X POST localhost:8000/v1/collect -H 'Content-Type: application/json' -H 'X-Sunrise-Key: demo-key' -d '{\"events\":[{\"event_id\":\"a1\",\"visitor_id\":\"u1\",\"type\":\"view\",\"product_id\":\"p10\",\"category\":\"shoes\"}]}')",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" -X POST localhost:8000/v1/collect -H \"Content-Type: application/json\" -H \"X-Sunrise-Key: wrong\" -d '{\"events\":[{\"event_id\":\"x\",\"visitor_id\":\"u\",\"type\":\"view\"}]}')",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" -X POST localhost:8000/v1/collect -H \"Content-Type: application/json\" -H \"X-Sunrise-Key: demo-key\" -d '{\"events\":[{\"event_id\":\"y\",\"visitor_id\":\"u\",\"type\":\"badtype\"}]}')",
+      "Bash(curl -s \"localhost:8000/v1/analytics/metrics\" -H \"X-Sunrise-Key: demo-key\")",
+      "Bash(curl -s \"localhost:8000/v1/analytics/funnel\" -H \"X-Sunrise-Key: demo-key\")",
+      "Bash(curl -s \"localhost:8000/ops/metrics\" -H \"X-Sunrise-Key: demo-key\")",
+      "Bash(curl -s -H \"X-Sunrise-Key: demo-key\" localhost:8000/v1/analytics/cohort)",
+      "Bash(curl -s -H \"X-Sunrise-Key: demo-key\" localhost:8000/v1/analytics/benchmark)",
+      "Bash(curl -s -X POST -H \"X-Sunrise-Key: demo-key\" -H \"Content-Type: application/json\" localhost:8000/v1/predictions/churn-risk -d '{\"visitor_ids\":[\"visitor-01\",\"visitor-02\"]}')",
+      "Bash(curl -s -X POST -H \"X-Sunrise-Key: demo-key\" -H \"Content-Type: application/json\" localhost:8000/v1/predictions/product-affinity -d '{\"visitor_id\":\"visitor-01\"}')",
+      "Bash(curl -s -X POST -H 'X-Sunrise-Key: demo-key' -H 'Content-Type: application/json' localhost:8000/v1/recommendations/items -d '{\"visitor_id\":\"visitor-01\",\"placement\":\"widget\",\"limit\":4}')",
+      "Bash(curl -s -X POST -H 'X-Sunrise-Key: demo-key' -H 'Content-Type: application/json' localhost:8000/v1/recommendations/items -d '{\"visitor_id\":\"visitor-01\",\"placement\":\"message\",\"limit\":4}')",
+      "Bash(curl -s -X POST -H 'X-Sunrise-Key: demo-key' -H 'Content-Type: application/json' localhost:8000/v1/recommendations/items -d '{\"visitor_id\":\"visitor-01\",\"placement\":\"onsite\",\"limit\":4,\"out_of_stock\":[\"p-sh1\"]}')",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" -X POST -H \"Content-Type: application/json\" localhost:8000/v1/recommendations/items -d '{\"visitor_id\":\"x\"}')",
+      "Bash(curl -s localhost:8000/openapi.json)",
+      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\)['paths']; print\\([k for k in p if 'recommend' in k]\\)\")"
+    ]
+  }
+}
