@@ -106,6 +106,74 @@ async def test_benchmark_api_isolation(client: AsyncClient):
     assert by_name["cvr"]["delta_ratio"] > 0
 
 
+async def test_inflow_revenue_segments_and_datatalk_api(client: AsyncClient):
+    await client.post(
+        "/v1/collect",
+        json={
+            "events": [
+                _ev("inf-1", "v1", "view", occurred_at="2026-06-01T00:00:00Z"),
+                {
+                    **_ev("inf-2", "v1", "campaign_impression", occurred_at="2026-06-01T00:01:00Z"),
+                    "session_id": "s1",
+                    "utm_medium": "kakao",
+                },
+                {
+                    **_ev("inf-3", "v1", "campaign_click", occurred_at="2026-06-01T00:02:00Z"),
+                    "session_id": "s1",
+                    "utm_medium": "kakao",
+                },
+                {
+                    **_ev("inf-4", "v1", "purchase", 100, "2026-06-01T00:03:00Z"),
+                    "session_id": "s1",
+                    "order_id": "o1",
+                    "utm_medium": "kakao",
+                },
+                {
+                    **_ev("inf-4-dup-order", "v1", "purchase", 100, "2026-06-01T00:03:30Z"),
+                    "session_id": "s1",
+                    "order_id": "o1",
+                    "utm_medium": "kakao",
+                },
+                {
+                    **_ev("inf-5", "v2", "view", occurred_at="2026-06-01T00:00:00Z"),
+                    "session_id": "s2",
+                    "utm_medium": "organic",
+                },
+                {
+                    **_ev("inf-6", "v2", "purchase", 50, "2026-06-01T00:04:00Z"),
+                    "session_id": "s2",
+                    "order_id": "o2",
+                    "utm_medium": "organic",
+                },
+            ]
+        },
+    )
+    params = {"start": "2026-06-01T00:00:00Z", "end": "2026-06-02T00:00:00Z"}
+
+    inflow = await client.get("/v1/analytics/inflow", params=params)
+    revenue = await client.get("/v1/analytics/revenue-breakdown", params=params)
+    segments = await client.get("/v1/analytics/segments", params=params)
+    datatalk = await client.get("/v1/analytics/datatalk", params=params)
+
+    assert inflow.status_code == 200
+    by_channel = {row["channel"]: row for row in inflow.json()["channels"]}
+    assert by_channel["kakao"]["revenue"] == 100.0
+    assert by_channel["kakao"]["session_count"] == 1
+    assert by_channel["kakao"]["purchaser_count"] == 1
+    assert by_channel["organic"]["purchase_count"] == 1
+    assert revenue.status_code == 200
+    assert revenue.json()["total_revenue"] == 150.0
+    assert revenue.json()["onsite_revenue"] == 100.0
+    assert revenue.json()["attributed_revenue"] == 100.0
+    assert segments.status_code == 200
+    by_visitor = {row["visitor_id"]: row for row in segments.json()["segments"]}
+    assert by_visitor["v1"]["visit_segment"] == "visit_active"
+    assert by_visitor["v1"]["purchase_segment"] == "purchase_active"
+    assert datatalk.status_code == 200
+    assert datatalk.json()["metrics"]["revenue"] == 150.0
+    assert datatalk.json()["metrics"]["session_count"] == 2
+
+
 # ---- 캐시 동작 (FakeCache 주입) ----
 async def test_cache_is_used():
     from app.core.cache import Cache

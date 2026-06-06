@@ -23,8 +23,12 @@ from app.analytics.adapters.repository import SqlAnalyticsRepository
 from app.analytics.application.queries import (
     GetBenchmark,
     GetCohort,
+    GetDataTalk,
     GetDashboardMetrics,
     GetFunnel,
+    GetInflow,
+    GetLifecycleSegments,
+    GetRevenueBreakdown,
 )
 from app.core.cache import Cache, get_cache
 from app.core.clickhouse_migrations import apply_clickhouse_migrations
@@ -44,6 +48,7 @@ class DashboardResponse(BaseModel):
     start: datetime
     end: datetime
     revenue: float
+    session_count: int
     visitor_count: int
     purchase_count: int
     cvr: float
@@ -96,6 +101,65 @@ class BenchmarkResponse(BaseModel):
     start: datetime
     end: datetime
     metrics: list[BenchmarkMetricResponse]
+
+
+class InflowChannelResponse(BaseModel):
+    channel: str
+    session_count: int
+    visitor_count: int
+    purchaser_count: int
+    purchase_count: int
+    revenue: float
+    cvr: float
+    aov: float
+
+
+class InflowResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    start: datetime
+    end: datetime
+    channels: list[InflowChannelResponse]
+
+
+class RevenueBreakdownResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    start: datetime
+    end: datetime
+    total_revenue: float
+    onsite_revenue: float
+    hidden_revenue: float
+    attributed_revenue: float
+    onsite_coverage_rate: float
+
+
+class LifecycleSegmentResponse(BaseModel):
+    visitor_id: str
+    visit_segment: str
+    purchase_segment: str
+    revenue: float
+
+
+class LifecycleSegmentReportResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    start: datetime
+    end: datetime
+    segments: list[LifecycleSegmentResponse]
+
+
+class DataTalkFunnelStepResponse(BaseModel):
+    name: str
+    visitors: int
+
+
+class DataTalkResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    start: datetime
+    end: datetime
+    metrics: DashboardResponse
+    funnel: list[DataTalkFunnelStepResponse]
+    revenue_breakdown: RevenueBreakdownResponse
+    top_inflow_channels: list[InflowChannelResponse]
+    anomalies: list[str]
 
 
 # ---- 의존성 ----
@@ -204,6 +268,7 @@ async def dashboard(
             start=start,
             end=end,
             revenue=m.revenue,
+            session_count=m.session_count,
             visitor_count=m.visitor_count,
             purchase_count=m.purchase_count,
             cvr=m.cvr,
@@ -317,4 +382,181 @@ async def benchmark(
 
     return await _cached(
         cache, key, settings.cache_ttl_seconds, BenchmarkResponse, compute
+    )
+
+
+@router.get("/inflow", response_model=InflowResponse)
+async def inflow(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+) -> InflowResponse:
+    start, end = _default_window(start, end)
+    key = _cache_key(tenant_id, "inflow", start, end)
+
+    async def compute() -> InflowResponse:
+        report = await GetInflow(repo).execute(tenant_id, start, end)
+        return InflowResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            channels=[
+                InflowChannelResponse(
+                    channel=channel.channel,
+                    session_count=channel.session_count,
+                    visitor_count=channel.visitor_count,
+                    purchaser_count=channel.purchaser_count,
+                    purchase_count=channel.purchase_count,
+                    revenue=channel.revenue,
+                    cvr=channel.cvr,
+                    aov=channel.aov,
+                )
+                for channel in report.channels
+            ],
+        )
+
+    return await _cached(cache, key, settings.cache_ttl_seconds, InflowResponse, compute)
+
+
+@router.get("/revenue-breakdown", response_model=RevenueBreakdownResponse)
+async def revenue_breakdown(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+) -> RevenueBreakdownResponse:
+    start, end = _default_window(start, end)
+    key = _cache_key(tenant_id, "revenue-breakdown", start, end)
+
+    async def compute() -> RevenueBreakdownResponse:
+        report = await GetRevenueBreakdown(repo).execute(tenant_id, start, end)
+        return RevenueBreakdownResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            total_revenue=report.total_revenue,
+            onsite_revenue=report.onsite_revenue,
+            hidden_revenue=report.hidden_revenue,
+            attributed_revenue=report.attributed_revenue,
+            onsite_coverage_rate=report.onsite_coverage_rate,
+        )
+
+    return await _cached(
+        cache, key, settings.cache_ttl_seconds, RevenueBreakdownResponse, compute
+    )
+
+
+@router.get("/segments", response_model=LifecycleSegmentReportResponse)
+async def segments(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> LifecycleSegmentReportResponse:
+    start, end = _default_window(start, end)
+    key = f"{_cache_key(tenant_id, 'segments', start, end)}:{limit}"
+
+    async def compute() -> LifecycleSegmentReportResponse:
+        report = await GetLifecycleSegments(repo).execute(tenant_id, start, end)
+        ordered = sorted(
+            report.segments,
+            key=lambda segment: segment.revenue,
+            reverse=True,
+        )
+        return LifecycleSegmentReportResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            segments=[
+                LifecycleSegmentResponse(
+                    visitor_id=segment.visitor_id,
+                    visit_segment=segment.visit_segment,
+                    purchase_segment=segment.purchase_segment,
+                    revenue=segment.revenue,
+                )
+                for segment in ordered[:limit]
+            ],
+        )
+
+    return await _cached(
+        cache, key, settings.cache_ttl_seconds, LifecycleSegmentReportResponse, compute
+    )
+
+
+@router.get("/datatalk", response_model=DataTalkResponse)
+async def datatalk(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+) -> DataTalkResponse:
+    start, end = _default_window(start, end)
+    key = _cache_key(tenant_id, "datatalk", start, end)
+
+    async def compute() -> DataTalkResponse:
+        report = await GetDataTalk(repo).execute(tenant_id, start, end)
+        metrics = DashboardResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            revenue=report.metrics.revenue,
+            session_count=report.metrics.session_count,
+            visitor_count=report.metrics.visitor_count,
+            purchase_count=report.metrics.purchase_count,
+            cvr=report.metrics.cvr,
+            aov=report.metrics.aov,
+            repeat_rate=report.metrics.repeat_rate,
+        )
+        revenue = report.revenue_breakdown
+        revenue_response = RevenueBreakdownResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            total_revenue=revenue.total_revenue,
+            onsite_revenue=revenue.onsite_revenue,
+            hidden_revenue=revenue.hidden_revenue,
+            attributed_revenue=revenue.attributed_revenue,
+            onsite_coverage_rate=revenue.onsite_coverage_rate,
+        )
+        return DataTalkResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            metrics=metrics,
+            funnel=[
+                DataTalkFunnelStepResponse(
+                    name=step.name,
+                    visitors=step.visitors,
+                )
+                for step in report.funnel.steps
+            ],
+            revenue_breakdown=revenue_response,
+            top_inflow_channels=[
+                InflowChannelResponse(
+                    channel=channel.channel,
+                    session_count=channel.session_count,
+                    visitor_count=channel.visitor_count,
+                    purchaser_count=channel.purchaser_count,
+                    purchase_count=channel.purchase_count,
+                    revenue=channel.revenue,
+                    cvr=channel.cvr,
+                    aov=channel.aov,
+                )
+                for channel in report.top_inflow_channels
+            ],
+            anomalies=list(report.anomalies),
+        )
+
+    return await _cached(
+        cache, key, settings.cache_ttl_seconds, DataTalkResponse, compute
     )

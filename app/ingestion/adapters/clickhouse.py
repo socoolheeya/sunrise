@@ -41,6 +41,12 @@ class ClickHouseEventMirror:
                     event.type,
                     event.product_id,
                     event.category,
+                    event.session_id,
+                    event.order_id,
+                    event.utm_source,
+                    event.utm_medium,
+                    event.utm_campaign,
+                    event.landing_page,
                     event.amount,
                     event.occurred_at,
                     event.received_at,
@@ -54,6 +60,12 @@ class ClickHouseEventMirror:
                 "type",
                 "product_id",
                 "category",
+                "session_id",
+                "order_id",
+                "utm_source",
+                "utm_medium",
+                "utm_campaign",
+                "landing_page",
                 "amount",
                 "occurred_at",
                 "received_at",
@@ -61,4 +73,3 @@ class ClickHouseEventMirror:
         )
         if inspect.isawaitable(result):
             await result
-

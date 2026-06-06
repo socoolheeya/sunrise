@@ -116,6 +116,47 @@ async def test_onsite_tracking_events_are_collected_idempotently(client: AsyncCl
     assert dismissal.status_code == 202
 
 
+async def test_onsite_decide_applies_daily_frequency_cap(client: AsyncClient):
+    await _seed_recommendation_candidates(client)
+    decide_payload = {
+        "visitor_id": "v-cap",
+        "current_event": "exit_intent",
+        "page_url": "https://shop.example/cart",
+        "placement": "popup",
+        "recent": {
+            "viewed_product_ids": ["p-shirt"],
+            "cart_product_ids": ["p-shirt"],
+            "purchased_product_ids": [],
+        },
+        "limit": 2,
+        "frequency_cap_per_day": 1,
+    }
+    first = await client.post("/v1/onsite/decide", json=decide_payload)
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["eligible"] is True
+
+    impression = await client.post(
+        "/v1/onsite/impressions",
+        json={
+            "decision_id": first_body["decision_id"],
+            "campaign_id": first_body["campaign_id"],
+            "visitor_id": "v-cap",
+            "product_id": "p-shirt",
+        },
+    )
+    assert impression.status_code == 202
+
+    second = await client.post("/v1/onsite/decide", json=decide_payload)
+
+    assert second.status_code == 200
+    second_body = second.json()
+    assert second_body["eligible"] is False
+    assert second_body["frequency_capped"] is True
+    assert second_body["campaign_id"] == first_body["campaign_id"]
+    assert second_body["items"] == []
+
+
 async def test_onsite_requires_auth(client: AsyncClient):
     response = await client.post(
         "/v1/onsite/decide",

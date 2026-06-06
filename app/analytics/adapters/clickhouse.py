@@ -11,7 +11,12 @@ import inspect
 from datetime import datetime
 from typing import Any, Protocol
 
-from app.analytics.domain.model import MetricInputs
+from app.analytics.domain.model import (
+    InflowChannel,
+    MetricInputs,
+    RevenueBreakdown,
+    VisitorLifecycleInput,
+)
 from app.analytics.domain.repository import AnalyticsRepository
 
 
@@ -59,14 +64,34 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
         self._events_table = events_table
         self._metric_daily_table = metric_daily_table
 
+    @property
+    def _events_relation(self) -> str:
+        return f"""
+            (
+                SELECT
+                    tenant_id,
+                    event_id,
+                    argMax(visitor_id, received_at) AS visitor_id,
+                    argMax(type, received_at) AS type,
+                    argMax(product_id, received_at) AS product_id,
+                    argMax(category, received_at) AS category,
+                    argMax(session_id, received_at) AS session_id,
+                    argMax(order_id, received_at) AS order_id,
+                    argMax(utm_source, received_at) AS utm_source,
+                    argMax(utm_medium, received_at) AS utm_medium,
+                    argMax(utm_campaign, received_at) AS utm_campaign,
+                    argMax(landing_page, received_at) AS landing_page,
+                    argMax(amount, received_at) AS amount,
+                    argMax(occurred_at, received_at) AS occurred_at,
+                    max(received_at) AS latest_received_at
+                FROM {self._events_table}
+                GROUP BY tenant_id, event_id
+            )
+        """
+
     async def metric_inputs(
         self, tenant_id: str, start: datetime, end: datetime
     ) -> MetricInputs:
-        if self._metric_daily_table is not None:
-            return await self._metric_inputs_from_daily(
-                "tenant_id = {tenant_id:String}",
-                {"tenant_id": tenant_id, "start": start, "end": end},
-            )
         return await self._metric_inputs(
             "tenant_id = {tenant_id:String}",
             {"tenant_id": tenant_id, "start": start, "end": end},
@@ -75,10 +100,6 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
     async def platform_metric_inputs(
         self, start: datetime, end: datetime
     ) -> MetricInputs:
-        if self._metric_daily_table is not None:
-            return await self._metric_inputs_from_daily(
-                "1 = 1", {"start": start, "end": end}
-            )
         return await self._metric_inputs("1 = 1", {"start": start, "end": end})
 
     async def _metric_inputs_from_daily(
@@ -105,7 +126,7 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
             SELECT count() AS repeat_purchaser_count
             FROM (
                 SELECT visitor_id
-                FROM {self._events_table}
+                FROM {self._events_relation}
                 WHERE {tenant_filter}
                   AND occurred_at >= {{start:DateTime}}
                   AND occurred_at < {{end:DateTime}}
@@ -137,40 +158,41 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
         rows = await _query_rows(
             self._client,
             f"""
-            SELECT
-                uniqExact(visitor_id) AS visitor_count,
-                uniqExactIf(visitor_id, type = 'purchase') AS purchaser_count,
-                countIf(type = 'purchase') AS purchase_count,
-                coalesce(sumIf(amount, type = 'purchase'), 0) AS revenue
-            FROM {self._events_table}
+            SELECT visitor_id, session_id, order_id, type, amount
+            FROM {self._events_relation}
             WHERE {base_filter}
             """,
             params,
         )
-        repeat_rows = await _query_rows(
-            self._client,
-            f"""
-            SELECT count() AS repeat_purchaser_count
-            FROM (
-                SELECT visitor_id
-                FROM {self._events_table}
-                WHERE {base_filter} AND type = 'purchase'
-                GROUP BY visitor_id
-                HAVING count() >= 2
-            )
-            """,
-            params,
-        )
-        row = _first_row(rows)
-        repeat_row = _first_row(repeat_rows)
+        visitors: set[str] = set()
+        sessions: set[str] = set()
+        purchase_orders: dict[str, tuple[str, float]] = {}
+        fallback_index = 0
+        for row in rows:
+            visitor_id = str(row["visitor_id"])
+            visitors.add(visitor_id)
+            session_id = row.get("session_id")
+            if session_id:
+                sessions.add(str(session_id))
+            if row.get("type") != "purchase":
+                continue
+            order_id = row.get("order_id")
+            key = str(order_id) if order_id else f"event:{fallback_index}"
+            fallback_index += 1
+            purchase_orders.setdefault(key, (visitor_id, float(row.get("amount") or 0.0)))
+        purchasers = {visitor_id for visitor_id, _ in purchase_orders.values()}
+        order_count_by_visitor: dict[str, int] = {}
+        for visitor_id, _ in purchase_orders.values():
+            order_count_by_visitor[visitor_id] = order_count_by_visitor.get(visitor_id, 0) + 1
         return MetricInputs(
-            visitor_count=int(row.get("visitor_count") or 0),
-            purchaser_count=int(row.get("purchaser_count") or 0),
-            purchase_count=int(row.get("purchase_count") or 0),
-            revenue=float(row.get("revenue") or 0.0),
-            repeat_purchaser_count=int(
-                repeat_row.get("repeat_purchaser_count") or 0
+            visitor_count=len(visitors),
+            purchaser_count=len(purchasers),
+            purchase_count=len(purchase_orders),
+            revenue=sum(amount for _, amount in purchase_orders.values()),
+            repeat_purchaser_count=sum(
+                1 for count in order_count_by_visitor.values() if count >= 2
             ),
+            session_count=len(sessions) or len(visitors),
         )
 
     async def funnel_visitor_counts(
@@ -180,7 +202,7 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
             self._client,
             f"""
             SELECT type, uniqExact(visitor_id) AS visitors
-            FROM {self._events_table}
+            FROM {self._events_relation}
             WHERE tenant_id = {{tenant_id:String}}
               AND occurred_at >= {{start:DateTime}}
               AND occurred_at < {{end:DateTime}}
@@ -199,7 +221,7 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
             SELECT
                 visitor_id,
                 formatDateTime(occurred_at, '%Y-%m') AS period
-            FROM {self._events_table}
+            FROM {self._events_relation}
             WHERE tenant_id = {{tenant_id:String}}
               AND occurred_at >= {{start:DateTime}}
               AND occurred_at < {{end:DateTime}}
@@ -208,6 +230,147 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
             {"tenant_id": tenant_id, "start": start, "end": end},
         )
         return [(str(row["visitor_id"]), str(row["period"])) for row in rows]
+
+    async def inflow_channels(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> list[InflowChannel]:
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT
+                category,
+                session_id,
+                utm_source,
+                utm_medium,
+                visitor_id,
+                order_id,
+                type,
+                amount
+            FROM {self._events_relation}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND occurred_at >= {{start:DateTime}}
+              AND occurred_at < {{end:DateTime}}
+            """,
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        sessions: dict[str, set[str]] = {}
+        visitors: dict[str, set[str]] = {}
+        purchasers: dict[str, set[str]] = {}
+        purchases: dict[str, dict[str, float]] = {}
+        fallback_index = 0
+        for row in rows:
+            channel = (
+                row.get("utm_medium")
+                or row.get("utm_source")
+                or row.get("category")
+                or "unknown"
+            )
+            channel = str(channel)
+            session_id = row.get("session_id")
+            visitor_id = str(row["visitor_id"])
+            if session_id:
+                sessions.setdefault(channel, set()).add(str(session_id))
+            visitors.setdefault(channel, set()).add(visitor_id)
+            if row.get("type") == "purchase":
+                purchasers.setdefault(channel, set()).add(visitor_id)
+                order_id = row.get("order_id")
+                key = str(order_id) if order_id else f"event:{fallback_index}"
+                fallback_index += 1
+                purchases.setdefault(channel, {}).setdefault(
+                    key, float(row.get("amount") or 0.0)
+                )
+        return [
+            InflowChannel(
+                channel=channel,
+                session_count=(
+                    len(sessions.get(channel, set()))
+                    or len(visitor_ids)
+                ),
+                visitor_count=len(visitor_ids),
+                purchaser_count=len(purchasers.get(channel, set())),
+                purchase_count=len(purchases.get(channel, {})),
+                revenue=sum(purchases.get(channel, {}).values()),
+            )
+            for channel, visitor_ids in visitors.items()
+        ]
+
+    async def revenue_breakdown(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> RevenueBreakdown:
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT visitor_id, order_id, type, amount
+            FROM {self._events_relation}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND occurred_at >= {{start:DateTime}}
+              AND occurred_at < {{end:DateTime}}
+            """,
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        touched_visitors: set[str] = set()
+        clicked_visitors: set[str] = set()
+        purchases: dict[str, tuple[str, float]] = {}
+        fallback_index = 0
+        for row in rows:
+            visitor_id = str(row["visitor_id"])
+            event_type = str(row["type"])
+            if event_type in {"campaign_impression", "campaign_click"}:
+                touched_visitors.add(visitor_id)
+            if event_type == "campaign_click":
+                clicked_visitors.add(visitor_id)
+            if event_type == "purchase":
+                order_id = row.get("order_id")
+                key = str(order_id) if order_id else f"event:{fallback_index}"
+                fallback_index += 1
+                purchases.setdefault(key, (visitor_id, float(row.get("amount") or 0.0)))
+        total = sum(amount for _, amount in purchases.values())
+        return RevenueBreakdown(
+            total_revenue=total,
+            onsite_revenue=sum(
+                amount
+                for visitor_id, amount in purchases.values()
+                if visitor_id in touched_visitors
+            ),
+            attributed_revenue=sum(
+                amount
+                for visitor_id, amount in purchases.values()
+                if visitor_id in clicked_visitors
+            ),
+        )
+
+    async def lifecycle_inputs(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> list[VisitorLifecycleInput]:
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT
+                visitor_id,
+                countIf(type IN ('view', 'category_view', 'cart_add', 'cart_remove')) AS view_count,
+                countIf(type = 'purchase') AS purchase_count,
+                coalesce(sumIf(amount, type = 'purchase'), 0) AS revenue,
+                max(occurred_at) AS last_seen_at,
+                maxIf(occurred_at, type = 'purchase') AS last_purchase_at
+            FROM {self._events_relation}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND occurred_at >= {{start:DateTime}}
+              AND occurred_at < {{end:DateTime}}
+            GROUP BY visitor_id
+            """,
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        return [
+            VisitorLifecycleInput(
+                visitor_id=str(row["visitor_id"]),
+                view_count=int(row.get("view_count") or 0),
+                purchase_count=int(row.get("purchase_count") or 0),
+                revenue=float(row.get("revenue") or 0.0),
+                last_seen_at=row.get("last_seen_at"),
+                last_purchase_at=row.get("last_purchase_at"),
+            )
+            for row in rows
+        ]
 
 
 def create_clickhouse_client(dsn: str) -> ClickHouseClient:

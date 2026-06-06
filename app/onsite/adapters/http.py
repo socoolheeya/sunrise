@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_session
+from app.core.orm import EventRow
 from app.core.tenant import require_tenant
 from app.events.registry import TRACKING_EVENT_SCHEMA_VERSION
 from app.ingestion.adapters.http import get_collect_use_case
@@ -49,6 +53,7 @@ class OnsiteDecisionRequest(BaseModel):
     placement: Literal["popup", "banner", "widget"] = "popup"
     recent: RecentBehaviorIn = Field(default_factory=RecentBehaviorIn)
     limit: int = Field(default=3, ge=1, le=10)
+    frequency_cap_per_day: int = Field(default=3, ge=1, le=20)
 
 
 class OnsiteCreativeResponse(BaseModel):
@@ -75,6 +80,7 @@ class OnsiteDecisionResponse(BaseModel):
     creative: OnsiteCreativeResponse | None
     items: list[OnsiteItemResponse]
     frequency_cap_key: str
+    frequency_capped: bool = False
     generated_at: datetime
 
 
@@ -119,10 +125,34 @@ def _event_type(event_name: str) -> str:
     }[event_name]
 
 
+async def _daily_impression_count(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    visitor_id: str,
+    campaign_id: str,
+    now: datetime,
+) -> int:
+    since = now - timedelta(days=1)
+    result = await session.scalar(
+        select(func.count())
+        .select_from(EventRow)
+        .where(
+            EventRow.tenant_id == tenant_id,
+            EventRow.visitor_id == visitor_id,
+            EventRow.type == "campaign_impression",
+            EventRow.category == campaign_id,
+            EventRow.occurred_at >= since,
+        )
+    )
+    return int(result or 0)
+
+
 @router.post("/decide", response_model=OnsiteDecisionResponse)
 async def decide_onsite(
     payload: OnsiteDecisionRequest,
     tenant_id: str = Depends(require_tenant),
+    session: AsyncSession = Depends(get_session),
     repo: RecommendationRepository = Depends(get_recommendation_repo),
     model_artifact: RecommendationModelArtifact = Depends(get_recommendation_model),
     start: datetime | None = Query(default=None),
@@ -170,6 +200,28 @@ async def decide_onsite(
         ),
         items,
     )
+    if decision.eligible and decision.campaign_id is not None:
+        impressions = await _daily_impression_count(
+            session,
+            tenant_id=tenant_id,
+            visitor_id=payload.visitor_id,
+            campaign_id=decision.campaign_id,
+            now=now,
+        )
+        if impressions >= payload.frequency_cap_per_day:
+            return OnsiteDecisionResponse(
+                decision_id=decision.decision_id,
+                campaign_id=decision.campaign_id,
+                eligible=False,
+                trigger=decision.trigger,
+                placement=decision.placement.value,
+                priority=None,
+                creative=None,
+                items=[],
+                frequency_cap_key=decision.frequency_cap_key,
+                frequency_capped=True,
+                generated_at=decision.generated_at,
+            )
     return OnsiteDecisionResponse(
         decision_id=decision.decision_id,
         campaign_id=decision.campaign_id,
@@ -196,6 +248,7 @@ async def decide_onsite(
             for item in decision.items
         ],
         frequency_cap_key=decision.frequency_cap_key,
+        frequency_capped=False,
         generated_at=decision.generated_at,
     )
 

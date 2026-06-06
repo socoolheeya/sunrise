@@ -11,7 +11,7 @@ from fastapi import Header, HTTPException, status
 from app.core.config import Settings, get_settings
 
 
-async def require_tenant(
+def require_tenant(
     x_sunrise_key: str | None = Header(default=None, alias="X-Sunrise-Key"),
 ) -> str:
     settings: Settings = get_settings()

@@ -12,6 +12,7 @@ from math import exp, log1p
 
 from app.prediction.domain.model import (
     ChurnRisk,
+    CustomerLifetimeValue,
     ProductAffinity,
     ProductAffinityFeatures,
     PredictionModelArtifact,
@@ -239,6 +240,39 @@ class GetProductAffinities:
         return metadata(end, self._model_artifact), affinities
 
 
+class GetCustomerLifetimeValues:
+    """Probabilistic CLV baseline from event-derived purchase history.
+
+    This is a production API contract with a conservative baseline scorer. A
+    later model registry artifact can replace the survival/monetary equations
+    with BG/NBD, Pareto/NBD, and Gamma-Gamma outputs without changing callers.
+    """
+
+    def __init__(
+        self,
+        repository: PredictionRepository,
+        model_artifact: PredictionModelArtifact,
+    ) -> None:
+        self._repository = repository
+        self._model_artifact = model_artifact
+
+    async def execute(
+        self,
+        tenant_id: str,
+        visitor_ids: list[str],
+        start: datetime,
+        end: datetime,
+        horizon_days: int,
+    ) -> tuple[ScoreMetadata, list[CustomerLifetimeValue]]:
+        features = await self._repository.visitor_features(tenant_id, visitor_ids, start, end)
+        values = [
+            _clv_from_features(feature, end=end, horizon_days=horizon_days)
+            for feature in features
+        ]
+        values.sort(key=lambda item: item.predicted_clv, reverse=True)
+        return metadata(end, self._model_artifact), values
+
+
 def _is_cold_start(features: VisitorFeatures) -> bool:
     return (
         features.view_count == 0
@@ -248,3 +282,51 @@ def _is_cold_start(features: VisitorFeatures) -> bool:
         and features.last_seen_at is None
         and features.last_purchase_at is None
     )
+
+
+def _clv_from_features(
+    features: VisitorFeatures,
+    *,
+    end: datetime,
+    horizon_days: int,
+) -> CustomerLifetimeValue:
+    days_since_purchase = _days_between(end, features.last_purchase_at)
+    purchase_count = max(features.purchase_count, 0)
+    avg_order_value = features.revenue / purchase_count if purchase_count else 0.0
+    frequency_factor = log1p(purchase_count)
+    recency_decay = exp(-min(days_since_purchase, 365) / 120)
+    survival_probability = clamp_score(
+        (0.15 + 0.35 * frequency_factor + 0.50 * recency_decay) / 1.55
+    )
+    annualized_frequency = frequency_factor * (horizon_days / 365)
+    expected_purchases = round(survival_probability * annualized_frequency, 4)
+    expected_order_value = round(avg_order_value, 2)
+    predicted_clv = round(expected_purchases * expected_order_value, 2)
+    reasons: list[str] = []
+    if purchase_count == 0:
+        reasons.append("no_purchase_history")
+    if days_since_purchase <= 30:
+        reasons.append("recent_purchase")
+    elif days_since_purchase >= 90:
+        reasons.append("stale_purchase")
+    if avg_order_value >= 100:
+        reasons.append("high_order_value")
+    if purchase_count >= 2:
+        reasons.append("repeat_purchase")
+    return CustomerLifetimeValue(
+        visitor_id=features.visitor_id,
+        survival_probability=survival_probability,
+        expected_purchases=expected_purchases,
+        expected_order_value=expected_order_value,
+        predicted_clv=predicted_clv,
+        band=_clv_band(predicted_clv),
+        reasons=tuple(reasons),
+    )
+
+
+def _clv_band(predicted_clv: float) -> str:
+    if predicted_clv >= 100:
+        return "high"
+    if predicted_clv >= 25:
+        return "medium"
+    return "low"

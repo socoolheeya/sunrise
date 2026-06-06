@@ -50,6 +50,8 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 - `X-Sunrise-Key`로 tenant를 식별한다.
 - 요청 payload의 tenant 값은 신뢰하지 않고 인증 컨텍스트 tenant를 사용한다.
 - 이벤트마다 `event_id`, `visitor_id`, `type`, `occurred_at`을 검증한다.
+- 이벤트는 `session_id`, `order_id`, `utm_source`, `utm_medium`, `utm_campaign`, `landing_page`를 선택 필드로 받을 수 있다.
+- `order_id`가 있는 구매 이벤트는 지표/유입/숨은 매출 집계에서 주문 단위로 중복 제거한다.
 - 중복 `event_id`는 저장하지 않고 duplicate count로 응답한다.
 - 운영 모드에서는 DB 저장 대신 Kafka `raw.events`로 발행한다.
 - Kafka 발행 실패 시 retry 후 실패 metric과 DLQ 또는 buffer 정책을 적용한다.
@@ -60,6 +62,10 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 - `/v1/analytics/funnel`: view -> cart_add -> purchase 단계별 visitor count와 drop-off를 반환한다.
 - `/v1/analytics/cohort`: 첫 구매월 기준 재구매 retention matrix를 반환한다.
 - `/v1/analytics/benchmark`: tenant 지표와 platform/industry 평균을 비교한다.
+- `/v1/analytics/inflow`: UTM/source 기반 유입 차원별 session, visitor, purchaser, purchase, revenue, CVR, AOV를 반환한다.
+- `/v1/analytics/revenue-breakdown`: 총 매출, 온사이트 추적 매출, 숨은 매출, 기여 매출을 반환한다.
+- `/v1/analytics/segments`: 방문활성/방문위험/방문비활성, 구매활성/구매위험/미구매 lifecycle segment를 반환한다.
+- `/v1/analytics/datatalk`: 일일 사이트 프로파일링 리포트 snapshot 형태로 metrics, funnel, revenue breakdown, top inflow, anomaly를 반환한다.
 - 조회 기간은 기본 day boundary로 정렬해 cache hit ratio를 높인다.
 - 모든 query는 tenant filter를 강제한다.
 
@@ -67,6 +73,7 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 
 - `/v1/predictions/purchase-score`는 visitor/customer별 구매 가능성 점수를 반환한다.
 - `/v1/predictions/churn-risk`는 구매주기 기반 이탈 위험과 추천 리마케팅 시점을 반환한다.
+- `/v1/predictions/clv`는 생존 확률, 예측 구매 횟수, 예상 주문금액, 예측 CLV를 반환한다.
 - `/v1/predictions/product-affinity`는 고객-상품/카테고리 반응 점수를 반환한다.
 - 모델 버전, feature version, generated_at을 응답에 포함한다.
 
@@ -89,9 +96,10 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 
 - `/v1/onsite/decide`는 visitor의 현재 행동 타이밍과 최근 행동 맥락을 평가해 온사이트 팝업/배너/위젯 노출 여부를 반환한다.
 - 탐색 보조, 장바구니 회복, 이탈 의도 같은 trigger를 구분한다.
-- decision 응답은 campaign_id, decision_id, placement, creative, 추천 상품, frequency cap key를 포함한다.
+- decision 응답은 campaign_id, decision_id, placement, creative, 추천 상품, frequency cap key, frequency_capped 여부를 포함한다.
+- `/v1/onsite/decide`는 최근 24시간 campaign_impression 이벤트를 조회해 visitor/campaign 단위 frequency cap을 적용한다.
 - `/v1/onsite/impressions`, `/v1/onsite/clicks`, `/v1/onsite/dismissals`는 온사이트 노출/상호작용을 tracking event로 수집한다.
-- 실제 운영에서는 Kotlin campaign 서비스의 활성 캠페인, audience membership, priority, frequency cap, experiment group과 연동해야 한다.
+- 실제 운영에서는 Kotlin campaign 서비스의 활성 캠페인, audience membership, priority, experiment group과 연동해야 한다.
 
 ### 4.7 Audience Template
 
@@ -99,7 +107,8 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 - 템플릿은 category, description, 조건 DSL rule, 추천 채널, 추천 trigger, tag를 포함한다.
 - category와 query로 필터링할 수 있어야 한다.
 - `/v1/audiences/templates/{template_id}`는 단일 템플릿 상세 조건 계약을 반환한다.
-- 운영 확장 시 템플릿 catalog는 관리자 편집형 저장소와 audience preview/materialization으로 연결한다.
+- `/v1/audiences/preview`는 템플릿 또는 직접 입력 rule을 이벤트/프로필/예측 score 조건으로 평가해 예상 모수와 샘플 visitor를 반환한다.
+- `/v1/audiences/materialize`는 동일 rule 평가 결과를 audience_id 기준으로 저장해 운영 캠페인 연결 가능한 read model을 만든다.
 
 ## 5. API 초안
 
@@ -110,8 +119,15 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 | GET | `/v1/analytics/funnel` | 퍼널 |
 | GET | `/v1/analytics/cohort` | 코호트 |
 | GET | `/v1/analytics/benchmark` | 벤치마크 |
+| GET | `/v1/analytics/inflow` | 유입 분석 |
+| GET | `/v1/analytics/revenue-breakdown` | 숨은 매출/기여 매출 분석 |
+| GET | `/v1/analytics/segments` | 방문·구매 lifecycle 세그먼트 |
+| GET | `/v1/analytics/datatalk` | 일일 사이트 프로파일링 리포트 |
+| GET | `/v1/predictions/model-status` | 모델 버전, feature contract, metric, readiness |
+| POST | `/v1/predictions/explain` | 방문자 예측 점수의 feature contribution 설명 |
 | POST | `/v1/predictions/purchase-score` | 구매 가능성 |
 | POST | `/v1/predictions/churn-risk` | 이탈 위험 |
+| POST | `/v1/predictions/clv` | 예측 CLV |
 | POST | `/v1/predictions/product-affinity` | 상품/카테고리 반응 점수 |
 | POST | `/v1/recommendations/products` | 추천 상품 가치/품질 feature 업서트 |
 | POST | `/v1/recommendations/items` | 상품 추천 |
@@ -124,6 +140,8 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 | POST | `/v1/onsite/dismissals` | 온사이트 닫기 수집 |
 | GET | `/v1/audiences/templates` | 기본 오디언스 템플릿 목록 |
 | GET | `/v1/audiences/templates/{template_id}` | 기본 오디언스 템플릿 상세 |
+| POST | `/v1/audiences/preview` | 오디언스 rule 미리보기 |
+| POST | `/v1/audiences/materialize` | 오디언스 rule 평가 결과 저장 |
 
 ## 6. 내부 구조
 

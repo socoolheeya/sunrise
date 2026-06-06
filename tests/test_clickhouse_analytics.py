@@ -24,14 +24,15 @@ class FakeClickHouseClient:
         params = parameters or {}
         self.queries.append((sql, params))
 
-        if "FROM agg_metric_daily" in sql:
-            return [{
-                "visitor_count": 10,
-                "purchaser_count": 4,
-                "purchase_count": 5,
-                "revenue": 1000.0,
-                "repeat_purchaser_count": 2,
-            }]
+        if "SELECT visitor_id, session_id, order_id, type, amount" in sql:
+            return [
+                {"visitor_id": "v1", "session_id": "s1", "order_id": None, "type": "view", "amount": None},
+                {"visitor_id": "v1", "session_id": "s1", "order_id": "o1", "type": "purchase", "amount": 100.0},
+                {"visitor_id": "v1", "session_id": "s1", "order_id": "o1", "type": "purchase", "amount": 100.0},
+                {"visitor_id": "v2", "session_id": "s2", "order_id": "o2", "type": "purchase", "amount": 200.0},
+                {"visitor_id": "v3", "session_id": "s3", "order_id": None, "type": "view", "amount": None},
+                {"visitor_id": "v4", "session_id": "s4", "order_id": None, "type": "cart_add", "amount": None},
+            ]
         if "repeat_purchaser_count" in sql:
             return [{"repeat_purchaser_count": 1}]
         if "uniqExactIf" in sql:
@@ -70,15 +71,16 @@ async def test_clickhouse_repository_metric_inputs():
     result = await repo.metric_inputs("tenant-a", START, END)
 
     assert result.visitor_count == 4
-    assert result.purchase_count == 3
-    assert result.revenue == 600.0
-    assert result.repeat_purchaser_count == 1
-    assert len(client.queries) == 2
+    assert result.purchase_count == 2
+    assert result.revenue == 300.0
+    assert result.repeat_purchaser_count == 0
+    assert result.session_count == 4
+    assert len(client.queries) == 1
     assert "FROM events_mv" in client.queries[0][0]
     assert client.queries[0][1]["tenant_id"] == "tenant-a"
 
 
-async def test_clickhouse_repository_uses_daily_metric_read_model_when_configured():
+async def test_clickhouse_repository_prefers_raw_metrics_for_order_deduplication():
     client = FakeClickHouseClient()
     repo = ClickHouseAnalyticsRepository(
         client,
@@ -88,17 +90,16 @@ async def test_clickhouse_repository_uses_daily_metric_read_model_when_configure
 
     result = await repo.metric_inputs("tenant-a", START, END)
 
-    assert result.visitor_count == 10
-    assert result.purchase_count == 5
-    assert result.revenue == 1000.0
-    assert result.repeat_purchaser_count == 1
-    assert len(client.queries) == 2
-    assert "FROM agg_metric_daily" in client.queries[0][0]
-    assert "uniqExact" not in client.queries[0][0]
+    assert result.visitor_count == 4
+    assert result.purchase_count == 2
+    assert result.revenue == 300.0
+    assert result.session_count == 4
+    assert len(client.queries) == 1
+    assert "FROM events" in client.queries[0][0]
     assert client.queries[0][1]["tenant_id"] == "tenant-a"
 
 
-async def test_clickhouse_repository_platform_metrics_use_daily_read_model():
+async def test_clickhouse_repository_platform_metrics_use_raw_events():
     client = FakeClickHouseClient()
     repo = ClickHouseAnalyticsRepository(
         client,
@@ -108,9 +109,10 @@ async def test_clickhouse_repository_platform_metrics_use_daily_read_model():
 
     result = await repo.platform_metric_inputs(START, END)
 
-    assert result.visitor_count == 10
-    assert len(client.queries) == 2
-    assert "FROM agg_metric_daily" in client.queries[0][0]
+    assert result.visitor_count == 4
+    assert result.session_count == 4
+    assert len(client.queries) == 1
+    assert "FROM events" in client.queries[0][0]
     assert "tenant_id = {tenant_id:String}" not in client.queries[0][0]
 
 
@@ -164,9 +166,10 @@ async def test_analytics_uses_clickhouse_backend_when_configured(monkeypatch, tm
 
     assert response.status_code == 200
     body = response.json()
-    assert body["visitor_count"] == 10
-    assert body["cvr"] == 0.4
-    assert "FROM agg_metric_daily" in fake.queries[0][0]
+    assert body["visitor_count"] == 4
+    assert body["session_count"] == 4
+    assert body["cvr"] == 0.5
+    assert "FROM events_mv" in fake.queries[0][0]
 
 
 async def test_clickhouse_backend_requires_ready_client(monkeypatch, tmp_path):

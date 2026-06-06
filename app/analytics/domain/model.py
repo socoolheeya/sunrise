@@ -7,6 +7,7 @@ KPI 계산식(CVR/AOV/재구매율)과 퍼널 이탈률을 도메인에 둔다.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -18,11 +19,13 @@ class MetricInputs:
     purchase_count: int  # 구매 건수
     revenue: float  # 매출 합계
     repeat_purchaser_count: int  # 2회 이상 구매한 방문자
+    session_count: int = 0  # 기간 내 순세션. 세션 ID가 없으면 visitor_count로 대체.
 
 
 @dataclass(frozen=True)
 class DashboardMetrics:
     revenue: float
+    session_count: int
     visitor_count: int
     purchase_count: int
     cvr: float  # 전환율 = 구매자 / 방문자
@@ -38,6 +41,7 @@ class DashboardMetrics:
         )
         return cls(
             revenue=m.revenue,
+            session_count=m.session_count or m.visitor_count,
             visitor_count=m.visitor_count,
             purchase_count=m.purchase_count,
             cvr=cvr,
@@ -160,3 +164,108 @@ class BenchmarkReport:
                 cls._metric("repeat_rate", tenant.repeat_rate, platform.repeat_rate),
             )
         )
+
+
+# ---- 유입/어트리뷰션 lite read model ----
+@dataclass(frozen=True)
+class InflowChannel:
+    channel: str
+    session_count: int
+    visitor_count: int
+    purchaser_count: int
+    purchase_count: int
+    revenue: float
+
+    @property
+    def cvr(self) -> float:
+        return self.purchaser_count / self.visitor_count if self.visitor_count else 0.0
+
+    @property
+    def aov(self) -> float:
+        return self.revenue / self.purchase_count if self.purchase_count else 0.0
+
+
+@dataclass(frozen=True)
+class InflowReport:
+    channels: tuple[InflowChannel, ...]
+
+
+@dataclass(frozen=True)
+class RevenueBreakdown:
+    total_revenue: float
+    onsite_revenue: float
+    attributed_revenue: float
+
+    @property
+    def hidden_revenue(self) -> float:
+        return max(0.0, self.total_revenue - self.onsite_revenue)
+
+    @property
+    def onsite_coverage_rate(self) -> float:
+        return self.onsite_revenue / self.total_revenue if self.total_revenue else 0.0
+
+
+# ---- 방문/구매 lifecycle segment ----
+@dataclass(frozen=True)
+class VisitorLifecycleInput:
+    visitor_id: str
+    view_count: int
+    purchase_count: int
+    revenue: float
+    last_seen_at: datetime | None
+    last_purchase_at: datetime | None
+
+
+@dataclass(frozen=True)
+class LifecycleSegment:
+    visitor_id: str
+    visit_segment: str
+    purchase_segment: str
+    revenue: float
+
+
+@dataclass(frozen=True)
+class LifecycleSegmentReport:
+    segments: tuple[LifecycleSegment, ...]
+
+
+def _days_since(reference: datetime, value: datetime | None) -> int:
+    if value is None:
+        return 365
+    if reference.tzinfo is not None and value.tzinfo is None:
+        value = value.replace(tzinfo=reference.tzinfo)
+    if reference.tzinfo is None and value.tzinfo is not None:
+        reference = reference.replace(tzinfo=value.tzinfo)
+    return max(0, (reference - value).days)
+
+
+def visit_segment(reference: datetime, last_seen_at: datetime | None) -> str:
+    days = _days_since(reference, last_seen_at)
+    if days <= 7:
+        return "visit_active"
+    if days <= 30:
+        return "visit_risk"
+    return "visit_inactive"
+
+
+def purchase_segment(
+    reference: datetime, purchase_count: int, last_purchase_at: datetime | None
+) -> str:
+    if purchase_count <= 0:
+        return "no_purchase"
+    days = _days_since(reference, last_purchase_at)
+    if days <= 30:
+        return "purchase_active"
+    if days <= 90:
+        return "purchase_risk"
+    return "purchase_inactive"
+
+
+# ---- DataTalk daily report snapshot ----
+@dataclass(frozen=True)
+class DataTalkReport:
+    metrics: DashboardMetrics
+    funnel: Funnel
+    revenue_breakdown: RevenueBreakdown
+    top_inflow_channels: tuple[InflowChannel, ...]
+    anomalies: tuple[str, ...]

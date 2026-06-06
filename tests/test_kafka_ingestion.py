@@ -66,6 +66,11 @@ def _tracking_event(event_id: str, visitor_id: str = "v1") -> TrackingEvent:
         type="view",
         occurred_at=NOW,
         received_at=NOW,
+        session_id="s1",
+        utm_source="naver",
+        utm_medium="cpc",
+        utm_campaign="summer",
+        landing_page="https://shop.example/landing",
     )
 
 
@@ -75,6 +80,9 @@ def test_event_payload_includes_published_language_version():
     assert payload["schema_version"] == "tracking-event.v1"
     assert payload["tenant_id"] == "tenant-a"
     assert payload["event_id"] == "e1"
+    assert payload["session_id"] == "s1"
+    assert payload["utm_source"] == "naver"
+    assert payload["utm_medium"] == "cpc"
     assert payload["occurred_at"] == "2026-06-03 00:00:00.000"
 
 

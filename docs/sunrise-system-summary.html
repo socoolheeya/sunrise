@@ -371,15 +371,15 @@
         </tr>
         <tr>
           <td>예측</td>
-          <td><code>POST /v1/predictions/purchase-score|churn-risk|product-affinity</code></td>
+          <td><code>GET /v1/predictions/model-status</code><br><code>POST /v1/predictions/explain|purchase-score|churn-risk|product-affinity|clv</code></td>
           <td><code>X-Sunrise-Key</code></td>
-          <td>ClickHouse feature repository + ML artifact scoring</td>
+          <td>ClickHouse feature repository + ML artifact scoring + feature contribution 설명</td>
         </tr>
         <tr>
-          <td>오디언스 템플릿</td>
-          <td><code>GET /v1/audiences/templates</code></td>
+          <td>오디언스</td>
+          <td><code>GET /v1/audiences/templates</code><br><code>POST /v1/audiences/preview|materialize</code></td>
           <td><code>X-Sunrise-Key</code></td>
-          <td>50+ 기본 오디언스 catalog, category/query 필터, 조건 DSL rule</td>
+          <td>50+ 기본 catalog, 조건 DSL preview, materialized audience 저장</td>
         </tr>
         <tr>
           <td>추천 상품 feature</td>
@@ -403,7 +403,7 @@
           <td>온사이트 캠페인</td>
           <td><code>POST /v1/onsite/decide|impressions|clicks|dismissals</code></td>
           <td><code>X-Sunrise-Key</code></td>
-          <td>현재 행동 맥락으로 팝업/배너 decision, 노출/클릭/닫기 이벤트 수집</td>
+          <td>현재 행동 맥락으로 팝업/배너 decision, 이벤트 기반 frequency cap, 노출/클릭/닫기 수집</td>
         </tr>
       </tbody>
     </table>
@@ -777,13 +777,13 @@ docker compose ps</code></pre>
         </tr>
         <tr>
           <td>온사이트 실행</td>
-          <td><code>/v1/onsite/decide</code>, impression/click/dismiss 수집 API</td>
-          <td>활성 캠페인 저장소, frequency cap 저장소, 실험군 배정, 프론트 SDK 연동</td>
+          <td><code>/v1/onsite/decide</code>, impression/click/dismiss 수집 API, 이벤트 기반 frequency cap</td>
+          <td>활성 캠페인 저장소, 전용 frequency cap 저장소, 실험군 배정, 프론트 SDK 연동</td>
         </tr>
         <tr>
           <td>오디언스</td>
-          <td><code>/v1/audiences/templates</code>로 50+ 기본 템플릿 catalog 제공</td>
-          <td>조건 DSL 편집기, 실시간 모수 preview, snapshot materialization 연동</td>
+          <td><code>/v1/audiences/templates</code>, <code>/preview</code>, <code>/materialize</code></td>
+          <td>조건 DSL 편집기, scheduled refresh, 대용량 membership store</td>
         </tr>
         <tr>
           <td>개인정보</td>

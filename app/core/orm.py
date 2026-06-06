@@ -7,6 +7,7 @@ Clean Architecture 상 이는 인프라 세부사항이며, 도메인 계층은 
 
 from __future__ import annotations
 
+import decimal
 from datetime import datetime
 
 from sqlalchemy import (
@@ -16,7 +17,9 @@ from sqlalchemy import (
     Float,
     Index,
     Integer,
+    Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -33,6 +36,8 @@ class EventRow(Base):
         UniqueConstraint("tenant_id", "event_id", name="uq_events_tenant_event"),
         Index("ix_events_tenant_time", "tenant_id", "occurred_at"),
         Index("ix_events_tenant_visitor", "tenant_id", "visitor_id"),
+        Index("ix_events_tenant_session", "tenant_id", "session_id"),
+        Index("ix_events_tenant_order", "tenant_id", "order_id"),
     )
 
     # SQLite 는 INTEGER PRIMARY KEY 만 자동증가하므로 dialect variant 로 처리.
@@ -47,7 +52,13 @@ class EventRow(Base):
     type: Mapped[str] = mapped_column(String(32), nullable=False)
     product_id: Mapped[str | None] = mapped_column(String(128))
     category: Mapped[str | None] = mapped_column(String(128))
-    amount: Mapped[float | None] = mapped_column(Float)
+    session_id: Mapped[str | None] = mapped_column(String(128))
+    order_id: Mapped[str | None] = mapped_column(String(128))
+    utm_source: Mapped[str | None] = mapped_column(String(128))
+    utm_medium: Mapped[str | None] = mapped_column(String(128))
+    utm_campaign: Mapped[str | None] = mapped_column(String(128))
+    landing_page: Mapped[str | None] = mapped_column(String(2048))
+    amount: Mapped[decimal.Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -75,3 +86,26 @@ class ProductFeatureRow(Base):
     return_rate: Mapped[float | None] = mapped_column(Float)
     in_stock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AudienceMaterializationRow(Base):
+    __tablename__ = "audience_materializations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "audience_id", name="uq_audience_materialization"),
+        Index("ix_audience_materializations_tenant_status", "tenant_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    audience_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    rule_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    rule_json: Mapped[str] = mapped_column(Text, nullable=False)
+    member_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    sample_visitor_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -98,6 +98,42 @@ async def test_purchase_score_api(client: AsyncClient):
     assert by_visitor["unknown"]["band"] == "low"
 
 
+async def test_prediction_model_status_api(client: AsyncClient):
+    response = await client.get("/v1/predictions/model-status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "prediction-response.v1"
+    assert body["model_version"] == "ml.logistic-prediction.v2"
+    assert body["readiness"] == "ready"
+    assert {"purchase_score", "churn_risk", "product_affinity"} <= set(body["heads"])
+    assert body["metrics"]["purchase_auc"] >= 0.5
+
+
+async def test_prediction_explain_api_returns_feature_contributions(client: AsyncClient):
+    await _seed_prediction_events(client)
+
+    response = await client.post(
+        "/v1/predictions/explain",
+        params={
+            "start": "2026-01-01T00:00:00Z",
+            "end": "2026-06-03T00:00:00Z",
+        },
+        json={"visitor_id": "v1", "target": "purchase_score"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "prediction-response.v1"
+    assert body["visitor_id"] == "v1"
+    assert body["target"] == "purchase_score"
+    assert body["score"] > 0
+    assert body["band"] in {"low", "medium", "high"}
+    assert body["contributions"]
+    assert body["contributions"][0]["feature"]
+    assert body["top_reasons"]
+
+
 async def test_churn_risk_api(client: AsyncClient):
     await _seed_prediction_events(client)
 
@@ -115,6 +151,29 @@ async def test_churn_risk_api(client: AsyncClient):
     assert by_visitor["stale"]["risk"] >= 0.7
     assert by_visitor["stale"]["recommended_retargeting_days"] == 1
     assert by_visitor["unknown"]["risk"] == 0.0
+
+
+async def test_clv_api_returns_survival_and_predicted_value(client: AsyncClient):
+    await _seed_prediction_events(client)
+
+    response = await client.post(
+        "/v1/predictions/clv",
+        params={
+            "start": "2026-01-01T00:00:00Z",
+            "end": "2026-06-03T00:00:00Z",
+            "horizon_days": 180,
+        },
+        json={"visitor_ids": ["v1", "v2", "unknown"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "prediction-response.v1"
+    assert body["horizon_days"] == 180
+    by_visitor = {value["visitor_id"]: value for value in body["values"]}
+    assert by_visitor["v1"]["survival_probability"] > by_visitor["unknown"]["survival_probability"]
+    assert by_visitor["v1"]["predicted_clv"] > by_visitor["v2"]["predicted_clv"]
+    assert "recent_purchase" in by_visitor["v1"]["reasons"]
 
 
 async def test_product_affinity_api(client: AsyncClient):

@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy import inspect, text
+from sqlalchemy.engine import Connection
 
 from app.core.config import get_settings
 from app.core.orm import Base
@@ -39,6 +41,30 @@ async def init_models() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_event_attribution_columns)
+
+
+def _ensure_event_attribution_columns(connection: Connection) -> None:
+    inspector = inspect(connection)
+    if "events" not in inspector.get_table_names():
+        return
+
+    existing = {column["name"] for column in inspector.get_columns("events")}
+    columns = {
+        "session_id": "VARCHAR(128)",
+        "order_id": "VARCHAR(128)",
+        "utm_source": "VARCHAR(128)",
+        "utm_medium": "VARCHAR(128)",
+        "utm_campaign": "VARCHAR(128)",
+        "landing_page": "VARCHAR(2048)",
+    }
+    quote = connection.dialect.identifier_preparer.quote
+    for name, sql_type in columns.items():
+        if name in existing:
+            continue
+        connection.execute(
+            text(f"ALTER TABLE events ADD COLUMN {quote(name)} {sql_type}")
+        )
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

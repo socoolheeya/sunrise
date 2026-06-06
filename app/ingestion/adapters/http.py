@@ -123,6 +123,12 @@ async def collect(
                 received_at=received_at,
                 product_id=e.product_id,
                 category=e.category,
+                session_id=e.session_id,
+                order_id=e.order_id,
+                utm_source=e.utm_source,
+                utm_medium=e.utm_medium,
+                utm_campaign=e.utm_campaign,
+                landing_page=e.landing_page,
                 amount=e.amount,
             )
             for e in payload.events

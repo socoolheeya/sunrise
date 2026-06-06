@@ -57,6 +57,71 @@ async def test_audience_template_detail_returns_rule_contract(client: AsyncClien
     assert body["rule"]["all"]
 
 
+async def test_audience_preview_and_materialize_api(client: AsyncClient):
+    await client.post(
+        "/v1/collect",
+        json={
+            "events": [
+                {
+                    "event_id": "aud-1",
+                    "visitor_id": "v-cart",
+                    "type": "cart_add",
+                    "product_id": "p1",
+                    "occurred_at": "2026-06-01T00:00:00Z",
+                },
+                {
+                    "event_id": "aud-2",
+                    "visitor_id": "v-view",
+                    "type": "view",
+                    "product_id": "p2",
+                    "occurred_at": "2026-06-01T00:00:00Z",
+                },
+            ]
+        },
+    )
+    payload = {
+        "rule": {
+            "all": [
+                {
+                    "type": "event_count",
+                    "event": "cart_add",
+                    "window_days": 7,
+                    "op": "gte",
+                    "value": 1,
+                }
+            ]
+        },
+        "sample_limit": 10,
+    }
+
+    preview = await client.post(
+        "/v1/audiences/preview",
+        params={
+            "start": "2026-05-30T00:00:00Z",
+            "end": "2026-06-02T00:00:00Z",
+        },
+        json=payload,
+    )
+    materialized = await client.post(
+        "/v1/audiences/materialize",
+        params={
+            "start": "2026-05-30T00:00:00Z",
+            "end": "2026-06-02T00:00:00Z",
+        },
+        json={**payload, "audience_id": "cart-audience"},
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["schema_version"] == "audience-response.v1"
+    assert preview.json()["matched_count"] == 1
+    assert preview.json()["sample_visitor_ids"] == ["v-cart"]
+    assert preview.json()["unsupported_conditions"] == []
+    assert materialized.status_code == 200
+    assert materialized.json()["audience_id"] == "cart-audience"
+    assert materialized.json()["member_count"] == 1
+    assert materialized.json()["status"] == "active"
+
+
 async def test_audience_template_not_found(client: AsyncClient):
     response = await client.get("/v1/audiences/templates/missing")
 

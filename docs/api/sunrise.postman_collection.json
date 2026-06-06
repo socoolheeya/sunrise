@@ -75,7 +75,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"schema_version\": \"tracking-event.v1\",\n  \"events\": [\n    {\"event_id\": \"pm-seed-001\", \"visitor_id\": \"v1\", \"type\": \"view\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"occurred_at\": \"2026-06-01T09:00:00Z\"},\n    {\"event_id\": \"pm-seed-002\", \"visitor_id\": \"v1\", \"type\": \"cart_add\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"occurred_at\": \"2026-06-01T09:05:00Z\"},\n    {\"event_id\": \"pm-seed-003\", \"visitor_id\": \"v1\", \"type\": \"purchase\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"amount\": 120, \"occurred_at\": \"2026-06-01T09:10:00Z\"},\n    {\"event_id\": \"pm-seed-004\", \"visitor_id\": \"v2\", \"type\": \"view\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"occurred_at\": \"2026-06-01T10:00:00Z\"},\n    {\"event_id\": \"pm-seed-005\", \"visitor_id\": \"v2\", \"type\": \"cart_add\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"occurred_at\": \"2026-06-01T10:05:00Z\"},\n    {\"event_id\": \"pm-seed-006\", \"visitor_id\": \"v3\", \"type\": \"view\", \"product_id\": \"p-shoes\", \"category\": \"shoes\", \"occurred_at\": \"2026-06-02T11:00:00Z\"},\n    {\"event_id\": \"pm-seed-007\", \"visitor_id\": \"v4\", \"type\": \"view\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"occurred_at\": \"2026-06-02T12:00:00Z\"},\n    {\"event_id\": \"pm-seed-008\", \"visitor_id\": \"v4\", \"type\": \"purchase\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"amount\": 80, \"occurred_at\": \"2026-06-02T12:20:00Z\"},\n    {\"event_id\": \"pm-seed-009\", \"visitor_id\": \"v4\", \"type\": \"purchase\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"amount\": 200, \"occurred_at\": \"2026-06-03T12:20:00Z\"}\n  ]\n}"
+              "raw": "{\n  \"schema_version\": \"tracking-event.v1\",\n  \"events\": [\n    {\"event_id\": \"pm-seed-001\", \"visitor_id\": \"v1\", \"session_id\": \"s-pm-1\", \"type\": \"view\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"utm_source\": \"kakao\", \"utm_medium\": \"paid_social\", \"utm_campaign\": \"summer_recovery\", \"landing_page\": \"https://shop.example/tops\", \"occurred_at\": \"2026-06-01T09:00:00Z\"},\n    {\"event_id\": \"pm-seed-002\", \"visitor_id\": \"v1\", \"session_id\": \"s-pm-1\", \"type\": \"cart_add\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"utm_source\": \"kakao\", \"utm_medium\": \"paid_social\", \"utm_campaign\": \"summer_recovery\", \"occurred_at\": \"2026-06-01T09:05:00Z\"},\n    {\"event_id\": \"pm-seed-003\", \"visitor_id\": \"v1\", \"session_id\": \"s-pm-1\", \"order_id\": \"o-pm-1\", \"type\": \"purchase\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"utm_source\": \"kakao\", \"utm_medium\": \"paid_social\", \"utm_campaign\": \"summer_recovery\", \"amount\": 120, \"occurred_at\": \"2026-06-01T09:10:00Z\"},\n    {\"event_id\": \"pm-seed-004\", \"visitor_id\": \"v2\", \"session_id\": \"s-pm-2\", \"type\": \"view\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"utm_source\": \"google\", \"utm_medium\": \"organic\", \"landing_page\": \"https://shop.example/bags\", \"occurred_at\": \"2026-06-01T10:00:00Z\"},\n    {\"event_id\": \"pm-seed-005\", \"visitor_id\": \"v2\", \"session_id\": \"s-pm-2\", \"type\": \"cart_add\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"utm_source\": \"google\", \"utm_medium\": \"organic\", \"occurred_at\": \"2026-06-01T10:05:00Z\"},\n    {\"event_id\": \"pm-seed-006\", \"visitor_id\": \"v3\", \"session_id\": \"s-pm-3\", \"type\": \"view\", \"product_id\": \"p-shoes\", \"category\": \"shoes\", \"utm_source\": \"direct\", \"utm_medium\": \"direct\", \"occurred_at\": \"2026-06-02T11:00:00Z\"},\n    {\"event_id\": \"pm-seed-007\", \"visitor_id\": \"v4\", \"session_id\": \"s-pm-4\", \"type\": \"view\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"utm_source\": \"email\", \"utm_medium\": \"email\", \"utm_campaign\": \"repeat_purchase\", \"occurred_at\": \"2026-06-02T12:00:00Z\"},\n    {\"event_id\": \"pm-seed-008\", \"visitor_id\": \"v4\", \"session_id\": \"s-pm-4\", \"order_id\": \"o-pm-4a\", \"type\": \"purchase\", \"product_id\": \"p-shirt\", \"category\": \"tops\", \"utm_source\": \"email\", \"utm_medium\": \"email\", \"utm_campaign\": \"repeat_purchase\", \"amount\": 80, \"occurred_at\": \"2026-06-02T12:20:00Z\"},\n    {\"event_id\": \"pm-seed-009\", \"visitor_id\": \"v4\", \"session_id\": \"s-pm-5\", \"order_id\": \"o-pm-4b\", \"type\": \"purchase\", \"product_id\": \"p-bag\", \"category\": \"bags\", \"utm_source\": \"email\", \"utm_medium\": \"email\", \"utm_campaign\": \"repeat_purchase\", \"amount\": 200, \"occurred_at\": \"2026-06-03T12:20:00Z\"}\n  ]\n}"
             },
             "url": "{{base_url}}/v1/collect"
           }
@@ -156,6 +156,58 @@
             ],
             "url": "{{base_url}}/v1/analytics/benchmark?start={{start}}&end={{end}}"
           }
+        },
+        {
+          "name": "Inflow",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/inflow?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Revenue Breakdown",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/revenue-breakdown?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Lifecycle Segments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/segments?start={{start}}&end={{end}}&limit=20"
+          }
+        },
+        {
+          "name": "DataTalk Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/datatalk?start={{start}}&end={{end}}"
+          }
         }
       ]
     },
@@ -198,7 +250,7 @@
                 "value": "{{sunrise_api_key}}"
               }
             ],
-            "url": "{{base_url}}/v1/audiences/templates?query=구매가능성"
+            "url": "{{base_url}}/v1/audiences/templates?query=%EA%B5%AC%EB%A7%A4%EA%B0%80%EB%8A%A5%EC%84%B1"
           }
         },
         {
@@ -213,12 +265,67 @@
             ],
             "url": "{{base_url}}/v1/audiences/templates/cart_added_no_purchase_24h"
           }
+        },
+        {
+          "name": "Preview Audience",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rule\": {\n    \"all\": [\n      {\"type\": \"event_count\", \"event\": \"cart_add\", \"window_days\": 7, \"op\": \"gte\", \"value\": 1}\n    ]\n  },\n  \"sample_limit\": 10\n}"
+            },
+            "url": "{{base_url}}/v1/audiences/preview?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Materialize Audience",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audience_id\": \"postman-cart-audience\",\n  \"rule\": {\n    \"all\": [\n      {\"type\": \"event_count\", \"event\": \"cart_add\", \"window_days\": 7, \"op\": \"gte\", \"value\": 1}\n    ]\n  },\n  \"sample_limit\": 10\n}"
+            },
+            "url": "{{base_url}}/v1/audiences/materialize?start={{start}}&end={{end}}"
+          }
         }
       ]
     },
     {
       "name": "Prediction",
       "item": [
+        {
+          "name": "Model Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/predictions/model-status"
+          }
+        },
         {
           "name": "Purchase Score",
           "request": {
@@ -241,6 +348,27 @@
           }
         },
         {
+          "name": "Explain Prediction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_id\": \"v1\",\n  \"target\": \"purchase_score\"\n}"
+            },
+            "url": "{{base_url}}/v1/predictions/explain?start={{start}}&end={{end}}"
+          }
+        },
+        {
           "name": "Churn Risk",
           "request": {
             "method": "POST",
@@ -259,6 +387,27 @@
               "raw": "{\n  \"visitor_ids\": [\"v1\", \"v2\", \"v4\", \"unknown\"]\n}"
             },
             "url": "{{base_url}}/v1/predictions/churn-risk?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Predicted CLV",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_ids\": [\"v1\", \"v2\", \"v4\", \"unknown\"]\n}"
+            },
+            "url": "{{base_url}}/v1/predictions/clv?start={{start}}&end={{end}}&horizon_days=180"
           }
         },
         {
@@ -350,7 +499,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"visitor_id\": \"v1\",\n  \"current_event\": \"exit_intent\",\n  \"page_url\": \"https://shop.example/cart\",\n  \"placement\": \"popup\",\n  \"recent\": {\n    \"viewed_product_ids\": [\"p-shirt\"],\n    \"cart_product_ids\": [\"p-shirt\"],\n    \"purchased_product_ids\": []\n  },\n  \"limit\": 3\n}"
+              "raw": "{\n  \"visitor_id\": \"v1\",\n  \"current_event\": \"exit_intent\",\n  \"page_url\": \"https://shop.example/cart\",\n  \"placement\": \"popup\",\n  \"recent\": {\n    \"viewed_product_ids\": [\"p-shirt\"],\n    \"cart_product_ids\": [\"p-shirt\"],\n    \"purchased_product_ids\": []\n  },\n  \"limit\": 3,\n  \"frequency_cap_per_day\": 3\n}"
             },
             "url": "{{base_url}}/v1/onsite/decide?start={{start}}&end={{end}}"
           }

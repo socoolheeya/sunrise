@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audience.application.preview import AudienceRuleEvaluator, resolve_rule
 from app.audience.application.templates import (
     CATALOG_VERSION,
     GetAudienceTemplate,
     ListAudienceTemplates,
 )
 from app.audience.domain.model import AudienceTemplate
+from app.core.database import get_session
 from app.core.tenant import require_tenant
 from app.events.registry import AUDIENCE_RESPONSE_SCHEMA_VERSION
 
@@ -35,6 +39,46 @@ class AudienceTemplateListResponse(BaseModel):
     catalog_version: str
     count: int
     templates: list[AudienceTemplateResponse]
+
+
+class AudienceRuleRequest(BaseModel):
+    template_id: str | None = None
+    rule: dict[str, Any] | None = None
+    sample_limit: int = Field(default=20, ge=1, le=200)
+
+
+class AudienceMaterializeRequest(AudienceRuleRequest):
+    audience_id: str = Field(min_length=1, max_length=128)
+
+
+class AudiencePreviewResponse(BaseModel):
+    schema_version: str = AUDIENCE_RESPONSE_SCHEMA_VERSION
+    rule_hash: str
+    matched_count: int
+    sample_visitor_ids: list[str]
+    unsupported_conditions: list[str]
+    evaluated_at: datetime
+
+
+class AudienceMaterializationResponse(BaseModel):
+    schema_version: str = AUDIENCE_RESPONSE_SCHEMA_VERSION
+    audience_id: str
+    rule_hash: str
+    member_count: int
+    sample_visitor_ids: list[str]
+    status: str
+    as_of: datetime
+
+
+def _default_window(
+    start: datetime | None,
+    end: datetime | None,
+) -> tuple[datetime, datetime]:
+    if end is None:
+        end = datetime.now(timezone.utc)
+    if start is None:
+        start = end - timedelta(days=90)
+    return start, end
 
 
 def _response(template: AudienceTemplate) -> AudienceTemplateResponse:
@@ -78,3 +122,63 @@ async def get_template(
             detail="audience template not found",
         )
     return _response(template)
+
+
+@router.post("/preview", response_model=AudiencePreviewResponse)
+async def preview_audience(
+    payload: AudienceRuleRequest,
+    tenant_id: str = Depends(require_tenant),
+    session: AsyncSession = Depends(get_session),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+) -> AudiencePreviewResponse:
+    start, end = _default_window(start, end)
+    try:
+        rule = resolve_rule(payload.template_id, payload.rule)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    preview = await AudienceRuleEvaluator(session).preview(
+        tenant_id,
+        rule,
+        start,
+        end,
+        sample_limit=payload.sample_limit,
+    )
+    return AudiencePreviewResponse(
+        rule_hash=preview.rule_hash,
+        matched_count=preview.matched_count,
+        sample_visitor_ids=list(preview.sample_visitor_ids),
+        unsupported_conditions=list(preview.unsupported_conditions),
+        evaluated_at=preview.evaluated_at,
+    )
+
+
+@router.post("/materialize", response_model=AudienceMaterializationResponse)
+async def materialize_audience(
+    payload: AudienceMaterializeRequest,
+    tenant_id: str = Depends(require_tenant),
+    session: AsyncSession = Depends(get_session),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+) -> AudienceMaterializationResponse:
+    start, end = _default_window(start, end)
+    try:
+        rule = resolve_rule(payload.template_id, payload.rule)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    materialization = await AudienceRuleEvaluator(session).materialize(
+        tenant_id,
+        payload.audience_id,
+        rule,
+        start,
+        end,
+        sample_limit=payload.sample_limit,
+    )
+    return AudienceMaterializationResponse(
+        audience_id=materialization.audience_id,
+        rule_hash=materialization.rule_hash,
+        member_count=materialization.member_count,
+        sample_visitor_ids=list(materialization.sample_visitor_ids),
+        status=materialization.status,
+        as_of=materialization.as_of,
+    )

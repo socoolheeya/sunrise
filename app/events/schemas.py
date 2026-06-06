@@ -34,6 +34,12 @@ class TrackingEventIn(BaseModel):
     type: EventType
     product_id: str | None = Field(default=None, max_length=128)
     category: str | None = Field(default=None, max_length=128)
+    session_id: str | None = Field(default=None, max_length=128)
+    order_id: str | None = Field(default=None, max_length=128)
+    utm_source: str | None = Field(default=None, max_length=128)
+    utm_medium: str | None = Field(default=None, max_length=128)
+    utm_campaign: str | None = Field(default=None, max_length=128)
+    landing_page: str | None = Field(default=None, max_length=2048)
     amount: float | None = Field(default=None, ge=0, description="구매 금액(구매 이벤트)")
     occurred_at: datetime | None = Field(
         default=None, description="클라이언트 발생 시각(미지정 시 서버 수신 시각)"

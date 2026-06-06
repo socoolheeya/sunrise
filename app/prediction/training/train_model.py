@@ -95,12 +95,12 @@ def train_head(
     l2: float = 0.001,
 ) -> tuple[float, dict[str, float]]:
     bias = 0.0
-    weights = {name: 0.0 for name in feature_names}
+    weights = dict.fromkeys(feature_names, 0.0)
     n = len(rows)
 
     for _ in range(epochs):
         grad_b = 0.0
-        grad_w = {name: 0.0 for name in feature_names}
+        grad_w = dict.fromkeys(feature_names, 0.0)
         for features, label in rows:
             logit = bias + sum(weights[name] * features[name] for name in feature_names)
             pred = _sigmoid(logit)

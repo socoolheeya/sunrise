@@ -19,6 +19,12 @@ class TrackingEvent:
     received_at: datetime
     product_id: str | None = None
     category: str | None = None
+    session_id: str | None = None
+    order_id: str | None = None
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    landing_page: str | None = None
     amount: float | None = None
 
     @staticmethod
@@ -32,6 +38,12 @@ class TrackingEvent:
         received_at: datetime,
         product_id: str | None = None,
         category: str | None = None,
+        session_id: str | None = None,
+        order_id: str | None = None,
+        utm_source: str | None = None,
+        utm_medium: str | None = None,
+        utm_campaign: str | None = None,
+        landing_page: str | None = None,
         amount: float | None = None,
     ) -> "TrackingEvent":
         if not tenant_id:
@@ -53,6 +65,12 @@ class TrackingEvent:
             received_at=received_at,
             product_id=product_id,
             category=category,
+            session_id=session_id,
+            order_id=order_id,
+            utm_source=utm_source,
+            utm_medium=utm_medium,
+            utm_campaign=utm_campaign,
+            landing_page=landing_page,
             amount=amount,
         )
 

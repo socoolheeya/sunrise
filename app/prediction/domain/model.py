@@ -91,6 +91,17 @@ class ChurnRisk:
 
 
 @dataclass(frozen=True)
+class CustomerLifetimeValue:
+    visitor_id: str
+    survival_probability: float
+    expected_purchases: float
+    expected_order_value: float
+    predicted_clv: float
+    band: str
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ProductAffinity:
     visitor_id: str
     key: str
