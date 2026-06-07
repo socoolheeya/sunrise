@@ -12,6 +12,8 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from app.analytics.domain.model import (
+    AttributionChannel,
+    DataTalkSnapshot,
     InflowChannel,
     MetricInputs,
     RevenueBreakdown,
@@ -371,6 +373,103 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
             )
             for row in rows
         ]
+
+    async def attribution_channels(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ) -> list[AttributionChannel]:
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT
+                visitor_id,
+                order_id,
+                type,
+                amount,
+                occurred_at,
+                utm_medium,
+                utm_source,
+                category
+            FROM {self._events_relation}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND occurred_at >= {{start:DateTime}}
+              AND occurred_at < {{end:DateTime}}
+            """,
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        touches_by_visitor: dict[str, list[tuple[datetime, str]]] = {}
+        purchases: dict[str, tuple[str, datetime, float]] = {}
+        fallback_index = 0
+        for row in rows:
+            visitor_id = str(row["visitor_id"])
+            channel = (
+                row.get("utm_medium")
+                or row.get("utm_source")
+                or row.get("category")
+                or "unknown"
+            )
+            event_type = str(row["type"])
+            if event_type in {"campaign_impression", "campaign_click", "campaign_open"}:
+                touches_by_visitor.setdefault(visitor_id, []).append(
+                    (row["occurred_at"], str(channel))
+                )
+            if event_type == "purchase":
+                order_id = row.get("order_id")
+                key = str(order_id) if order_id else f"event:{fallback_index}"
+                fallback_index += 1
+                purchases.setdefault(
+                    key,
+                    (visitor_id, row["occurred_at"], float(row.get("amount") or 0.0)),
+                )
+
+        window_seconds = attribution_window_hours * 3600
+        touchpoint_counts: dict[str, int] = {}
+        purchaser_sets: dict[str, set[str]] = {}
+        purchase_counts: dict[str, int] = {}
+        revenue: dict[str, float] = {}
+        for touches in touches_by_visitor.values():
+            for _, channel in touches:
+                touchpoint_counts[channel] = touchpoint_counts.get(channel, 0) + 1
+            touches.sort(key=lambda item: item[0])
+        for visitor_id, purchased_at, amount in purchases.values():
+            candidates = [
+                (touched_at, channel)
+                for touched_at, channel in touches_by_visitor.get(visitor_id, [])
+                if 0 <= (purchased_at - touched_at).total_seconds() <= window_seconds
+            ]
+            if not candidates:
+                continue
+            _, channel = max(candidates, key=lambda item: item[0])
+            purchaser_sets.setdefault(channel, set()).add(visitor_id)
+            purchase_counts[channel] = purchase_counts.get(channel, 0) + 1
+            revenue[channel] = revenue.get(channel, 0.0) + amount
+        return [
+            AttributionChannel(
+                channel=channel,
+                touchpoint_count=touchpoint_counts.get(channel, 0),
+                purchaser_count=len(purchaser_sets.get(channel, set())),
+                purchase_count=purchase_counts.get(channel, 0),
+                revenue=revenue.get(channel, 0.0),
+                model="last_touch",
+            )
+            for channel in sorted(
+                set(touchpoint_counts) | set(revenue),
+                key=lambda item: revenue.get(item, 0.0),
+                reverse=True,
+            )
+        ]
+
+    async def save_datatalk_snapshot(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        snapshot: DataTalkSnapshot,
+    ) -> None:
+        _ = (tenant_id, start, end, snapshot)
 
 
 def create_clickhouse_client(dsn: str) -> ClickHouseClient:

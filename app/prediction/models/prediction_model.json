@@ -59,5 +59,13 @@
     "affinity_positive_label": "product_engagement_or_purchase",
     "sample_count": 184230,
     "positive_rate": 0.213
+  },
+  "drift_baseline": {
+    "view_signal": 0.31,
+    "cart_signal": 0.12,
+    "purchase_signal": 0.08,
+    "revenue_signal": 0.15,
+    "recency_signal": 0.42,
+    "inactivity_signal": 0.34
   }
 }

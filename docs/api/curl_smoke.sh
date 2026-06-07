@@ -59,6 +59,10 @@ request "Analytics inflow" \
   "${BASE_URL}/v1/analytics/inflow?start=${START}&end=${END}" \
   -H "X-Sunrise-Key: ${API_KEY}"
 
+request "Analytics attribution" \
+  "${BASE_URL}/v1/analytics/attribution?start=${START}&end=${END}&attribution_window_hours=72" \
+  -H "X-Sunrise-Key: ${API_KEY}"
+
 request "Analytics revenue breakdown" \
   "${BASE_URL}/v1/analytics/revenue-breakdown?start=${START}&end=${END}" \
   -H "X-Sunrise-Key: ${API_KEY}"
@@ -69,6 +73,10 @@ request "Analytics lifecycle segments" \
 
 request "Analytics DataTalk report" \
   "${BASE_URL}/v1/analytics/datatalk?start=${START}&end=${END}" \
+  -H "X-Sunrise-Key: ${API_KEY}"
+
+request "Analytics DataTalk snapshot" \
+  -X POST "${BASE_URL}/v1/analytics/datatalk/snapshot?start=${START}&end=${END}" \
   -H "X-Sunrise-Key: ${API_KEY}"
 
 request "Audience templates" \
@@ -92,6 +100,12 @@ request "Audience preview" \
   -H "Content-Type: application/json" \
   -H "X-Sunrise-Key: ${API_KEY}" \
   -d '{"rule":{"all":[{"type":"event_count","event":"cart_add","window_days":7,"op":"gte","value":1}]},"sample_limit":10}'
+
+request "Audience prediction-score preview" \
+  -X POST "${BASE_URL}/v1/audiences/preview?start=${START}&end=${END}" \
+  -H "Content-Type: application/json" \
+  -H "X-Sunrise-Key: ${API_KEY}" \
+  -d '{"rule":{"all":[{"type":"score","name":"purchase_score","op":"gte","value":0.2}]},"sample_limit":10}'
 
 request "Audience materialize" \
   -X POST "${BASE_URL}/v1/audiences/materialize?start=${START}&end=${END}" \

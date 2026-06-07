@@ -8,19 +8,25 @@ lite 버전은 events 원본 테이블을 직접 집계한다. 운영에서는 �
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from dataclasses import asdict
 
 from sqlalchemy import ColumnElement, and_, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.domain.model import (
+    AttributionChannel,
+    DataTalkSnapshot,
     InflowChannel,
     MetricInputs,
     RevenueBreakdown,
     VisitorLifecycleInput,
 )
 from app.analytics.domain.repository import AnalyticsRepository
-from app.core.orm import EventRow
+from app.core.orm import DataTalkSnapshotRow, EventRow
 
 
 class SqlAnalyticsRepository(AnalyticsRepository):
@@ -250,3 +256,116 @@ class SqlAnalyticsRepository(AnalyticsRepository):
             )
             for visitor_id, values in state.items()
         ]
+
+    async def attribution_channels(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ) -> list[AttributionChannel]:
+        rows = await self._session.execute(
+            select(
+                EventRow.visitor_id,
+                EventRow.order_id,
+                EventRow.type,
+                EventRow.amount,
+                EventRow.occurred_at,
+                EventRow.utm_medium,
+                EventRow.utm_source,
+                EventRow.category,
+            ).where(self._tenant_window(tenant_id, start, end))
+        )
+        touches_by_visitor: dict[str, list[tuple[datetime, str]]] = {}
+        purchases: dict[str, tuple[str, datetime, float]] = {}
+        fallback_index = 0
+        for (
+            visitor_id,
+            order_id,
+            event_type,
+            amount,
+            occurred_at,
+            utm_medium,
+            utm_source,
+            category,
+        ) in rows.all():
+            channel = utm_medium or utm_source or category or "unknown"
+            if event_type in {"campaign_impression", "campaign_click", "campaign_open"}:
+                touches_by_visitor.setdefault(visitor_id, []).append((occurred_at, channel))
+            if event_type == "purchase":
+                key = order_id or f"event:{fallback_index}"
+                fallback_index += 1
+                purchases.setdefault(key, (visitor_id, occurred_at, float(amount or 0.0)))
+
+        window_seconds = attribution_window_hours * 3600
+        touchpoint_counts: dict[str, int] = {}
+        purchaser_sets: dict[str, set[str]] = {}
+        purchase_counts: dict[str, int] = {}
+        revenue: dict[str, float] = {}
+        for visitor_id, touches in touches_by_visitor.items():
+            for _, channel in touches:
+                touchpoint_counts[channel] = touchpoint_counts.get(channel, 0) + 1
+            touches.sort(key=lambda item: item[0])
+
+        for visitor_id, purchased_at, amount in purchases.values():
+            candidates = [
+                (touched_at, channel)
+                for touched_at, channel in touches_by_visitor.get(visitor_id, [])
+                if 0 <= (purchased_at - touched_at).total_seconds() <= window_seconds
+            ]
+            if not candidates:
+                continue
+            _, channel = max(candidates, key=lambda item: item[0])
+            purchaser_sets.setdefault(channel, set()).add(visitor_id)
+            purchase_counts[channel] = purchase_counts.get(channel, 0) + 1
+            revenue[channel] = revenue.get(channel, 0.0) + amount
+
+        channels = sorted(
+            set(touchpoint_counts) | set(revenue),
+            key=lambda channel: revenue.get(channel, 0.0),
+            reverse=True,
+        )
+        return [
+            AttributionChannel(
+                channel=channel,
+                touchpoint_count=touchpoint_counts.get(channel, 0),
+                purchaser_count=len(purchaser_sets.get(channel, set())),
+                purchase_count=purchase_counts.get(channel, 0),
+                revenue=revenue.get(channel, 0.0),
+                model="last_touch",
+            )
+            for channel in channels
+        ]
+
+    async def save_datatalk_snapshot(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        snapshot: DataTalkSnapshot,
+    ) -> None:
+        values = {
+            "tenant_id": tenant_id,
+            "snapshot_id": snapshot.snapshot_id,
+            "start_at": start,
+            "end_at": end,
+            "status": snapshot.status,
+            "payload_json": json.dumps(asdict(snapshot.report), default=str),
+            "generated_at": snapshot.generated_at,
+            "created_at": datetime.now(tz=snapshot.generated_at.tzinfo),
+        }
+        bind = self._session.get_bind()
+        if bind.dialect.name == "sqlite":
+            stmt = sqlite_insert(DataTalkSnapshotRow).values(**values)
+        else:
+            stmt = pg_insert(DataTalkSnapshotRow).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["tenant_id", "snapshot_id"],
+            set_={
+                "status": values["status"],
+                "payload_json": values["payload_json"],
+                "generated_at": values["generated_at"],
+            },
+        )
+        await self._session.execute(stmt)
+        await self._session.commit()

@@ -122,6 +122,54 @@ async def test_audience_preview_and_materialize_api(client: AsyncClient):
     assert materialized.json()["status"] == "active"
 
 
+async def test_audience_preview_uses_prediction_score_conditions(client: AsyncClient):
+    await client.post(
+        "/v1/collect",
+        json={
+            "events": [
+                {
+                    "event_id": "aud-score-1",
+                    "visitor_id": "v-hot",
+                    "type": "view",
+                    "product_id": "p1",
+                    "occurred_at": "2026-06-01T00:00:00Z",
+                },
+                {
+                    "event_id": "aud-score-2",
+                    "visitor_id": "v-hot",
+                    "type": "cart_add",
+                    "product_id": "p1",
+                    "occurred_at": "2026-06-01T00:05:00Z",
+                },
+            ]
+        },
+    )
+
+    response = await client.post(
+        "/v1/audiences/preview",
+        params={
+            "start": "2026-06-01T00:00:00Z",
+            "end": "2026-06-02T00:00:00Z",
+        },
+        json={
+            "rule": {
+                "all": [
+                    {
+                        "type": "score",
+                        "name": "purchase_score",
+                        "op": "gte",
+                        "value": 0.2,
+                    }
+                ]
+            },
+            "sample_limit": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sample_visitor_ids"] == ["v-hot"]
+
+
 async def test_audience_template_not_found(client: AsyncClient):
     response = await client.get("/v1/audiences/templates/missing")
 

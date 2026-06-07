@@ -63,9 +63,11 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 - `/v1/analytics/cohort`: 첫 구매월 기준 재구매 retention matrix를 반환한다.
 - `/v1/analytics/benchmark`: tenant 지표와 platform/industry 평균을 비교한다.
 - `/v1/analytics/inflow`: UTM/source 기반 유입 차원별 session, visitor, purchaser, purchase, revenue, CVR, AOV를 반환한다.
+- `/v1/analytics/attribution`: campaign touchpoint 이후 attribution window 내 구매를 last-touch 기준 채널별로 반환한다.
 - `/v1/analytics/revenue-breakdown`: 총 매출, 온사이트 추적 매출, 숨은 매출, 기여 매출을 반환한다.
 - `/v1/analytics/segments`: 방문활성/방문위험/방문비활성, 구매활성/구매위험/미구매 lifecycle segment를 반환한다.
-- `/v1/analytics/datatalk`: 일일 사이트 프로파일링 리포트 snapshot 형태로 metrics, funnel, revenue breakdown, top inflow, anomaly를 반환한다.
+- `/v1/analytics/datatalk`: 일일 사이트 프로파일링 리포트 형태로 metrics, funnel, revenue breakdown, top inflow, anomaly를 반환한다.
+- `/v1/analytics/datatalk/snapshot`: 동일 리포트를 tenant/window 기준 frozen snapshot으로 저장한다.
 - 조회 기간은 기본 day boundary로 정렬해 cache hit ratio를 높인다.
 - 모든 query는 tenant filter를 강제한다.
 
@@ -76,6 +78,7 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 - `/v1/predictions/clv`는 생존 확률, 예측 구매 횟수, 예상 주문금액, 예측 CLV를 반환한다.
 - `/v1/predictions/product-affinity`는 고객-상품/카테고리 반응 점수를 반환한다.
 - 모델 버전, feature version, generated_at을 응답에 포함한다.
+- `/v1/predictions/model-status`는 trained_at, model_age_days, backtest metric, drift baseline, readiness를 반환한다.
 
 ### 4.4 Recommendation
 
@@ -120,9 +123,11 @@ Python 서비스는 Sunrise 플랫폼의 데이터 수집, 분석, 지표, AI/ML
 | GET | `/v1/analytics/cohort` | 코호트 |
 | GET | `/v1/analytics/benchmark` | 벤치마크 |
 | GET | `/v1/analytics/inflow` | 유입 분석 |
+| GET | `/v1/analytics/attribution` | 캠페인 touchpoint 기여 분석 |
 | GET | `/v1/analytics/revenue-breakdown` | 숨은 매출/기여 매출 분석 |
 | GET | `/v1/analytics/segments` | 방문·구매 lifecycle 세그먼트 |
 | GET | `/v1/analytics/datatalk` | 일일 사이트 프로파일링 리포트 |
+| POST | `/v1/analytics/datatalk/snapshot` | DataTalk 리포트 snapshot 저장 |
 | GET | `/v1/predictions/model-status` | 모델 버전, feature contract, metric, readiness |
 | POST | `/v1/predictions/explain` | 방문자 예측 점수의 feature contribution 설명 |
 | POST | `/v1/predictions/purchase-score` | 구매 가능성 |

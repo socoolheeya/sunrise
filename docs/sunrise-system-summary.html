@@ -359,9 +359,9 @@
         </tr>
         <tr>
           <td>분석 지표</td>
-          <td><code>GET /v1/analytics/metrics</code></td>
+          <td><code>GET /v1/analytics/metrics|attribution</code><br><code>POST /v1/analytics/datatalk/snapshot</code></td>
           <td><code>X-Sunrise-Key</code></td>
-          <td>ClickHouse read model 조회, Redis 캐시, CVR/AOV/repeat 계산</td>
+          <td>ClickHouse read model 조회, Redis 캐시, CVR/AOV/repeat 계산, last-touch 기여 분석, DataTalk frozen snapshot</td>
         </tr>
         <tr>
           <td>퍼널/코호트/벤치마크</td>
@@ -373,7 +373,7 @@
           <td>예측</td>
           <td><code>GET /v1/predictions/model-status</code><br><code>POST /v1/predictions/explain|purchase-score|churn-risk|product-affinity|clv</code></td>
           <td><code>X-Sunrise-Key</code></td>
-          <td>ClickHouse feature repository + ML artifact scoring + feature contribution 설명</td>
+          <td>ClickHouse feature repository + ML artifact scoring + feature contribution 설명 + drift baseline 상태</td>
         </tr>
         <tr>
           <td>오디언스</td>

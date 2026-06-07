@@ -171,6 +171,19 @@
           }
         },
         {
+          "name": "Attribution",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/attribution?start={{start}}&end={{end}}&attribution_window_hours=72"
+          }
+        },
+        {
           "name": "Revenue Breakdown",
           "request": {
             "method": "GET",
@@ -207,6 +220,19 @@
               }
             ],
             "url": "{{base_url}}/v1/analytics/datatalk?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "DataTalk Snapshot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/analytics/datatalk/snapshot?start={{start}}&end={{end}}"
           }
         }
       ]
@@ -283,6 +309,27 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"rule\": {\n    \"all\": [\n      {\"type\": \"event_count\", \"event\": \"cart_add\", \"window_days\": 7, \"op\": \"gte\", \"value\": 1}\n    ]\n  },\n  \"sample_limit\": 10\n}"
+            },
+            "url": "{{base_url}}/v1/audiences/preview?start={{start}}&end={{end}}"
+          }
+        },
+        {
+          "name": "Preview Audience - Prediction Score",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sunrise-Key",
+                "value": "{{sunrise_api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rule\": {\n    \"all\": [\n      {\"type\": \"score\", \"name\": \"purchase_score\", \"op\": \"gte\", \"value\": 0.2}\n    ]\n  },\n  \"sample_limit\": 10\n}"
             },
             "url": "{{base_url}}/v1/audiences/preview?start={{start}}&end={{end}}"
           }

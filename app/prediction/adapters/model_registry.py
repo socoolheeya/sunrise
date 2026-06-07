@@ -12,6 +12,7 @@ from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any
+from datetime import datetime
 
 from app.prediction.domain.model import PredictionModelArtifact
 
@@ -85,16 +86,27 @@ def _validate(raw: dict[str, Any]) -> PredictionModelArtifact:
         if float(metrics.get(metric, 0.0)) < 0.5:
             raise ValueError(f"prediction model {metric} must be at least 0.5")
 
+    trained_at = raw.get("trained_at")
+
     return PredictionModelArtifact(
         model_version=str(raw["model_version"]),
         feature_version=str(raw["feature_version"]),
         model_type=model_type,
+        trained_at=(
+            datetime.fromisoformat(str(trained_at).replace("Z", "+00:00"))
+            if trained_at
+            else None
+        ),
         visitor_features=VISITOR_FEATURE_NAMES,
         affinity_features=AFFINITY_FEATURE_NAMES,
         heads=parsed_heads,
         biases=parsed_biases,
         metrics={key: float(value) for key, value in metrics.items()},
         training_data=dict(raw.get("training_data") or {}),
+        drift_baseline={
+            key: float(value)
+            for key, value in (raw.get("drift_baseline") or {}).items()
+        },
     )
 
 

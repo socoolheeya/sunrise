@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -15,6 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audience.application.templates import GetAudienceTemplate
 from app.core.orm import AudienceMaterializationRow, EventRow
+from app.prediction.application.scoring import (
+    BuildVisitorPredictionFeatures,
+    MultiHeadLogisticPredictionModel,
+)
+from app.prediction.domain.model import PredictionModelArtifact, VisitorFeatures
 
 
 @dataclass(frozen=True)
@@ -56,8 +61,13 @@ def resolve_rule(template_id: str | None, rule: dict[str, Any] | None) -> dict[s
 
 
 class AudienceRuleEvaluator:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        prediction_model_artifact: PredictionModelArtifact | None = None,
+    ) -> None:
         self._session = session
+        self._prediction_model_artifact = prediction_model_artifact
 
     async def preview(
         self,
@@ -128,7 +138,7 @@ class AudienceRuleEvaluator:
         matched: list[str] = []
         for visitor_id, profile in profiles.items():
             features = self._build_features(profile, end)
-            scores = self._build_scores(features)
+            scores = self._build_scores(visitor_id, features, end)
             if _evaluate_rule(
                 rule,
                 event_counts.get(visitor_id, {}),
@@ -223,8 +233,38 @@ class AudienceRuleEvaluator:
             "onsite_frequency_available": True,
         }
 
-    @staticmethod
-    def _build_scores(features: dict[str, Any]) -> dict[str, float]:
+    def _build_scores(
+        self,
+        visitor_id: str,
+        features: dict[str, Any],
+        end: datetime,
+    ) -> dict[str, float]:
+        if self._prediction_model_artifact is not None:
+            raw = VisitorFeatures(
+                visitor_id=visitor_id,
+                view_count=int(features["view_count"]),
+                cart_add_count=int(features["cart_add_count"]),
+                purchase_count=int(features["purchase_count"]),
+                revenue=float(features["total_revenue"]),
+                last_seen_at=end - timedelta(days=int(features["days_since_last_seen"])),
+                last_purchase_at=(
+                    None
+                    if int(features["days_since_last_purchase"]) >= 365
+                    else end - timedelta(days=int(features["days_since_last_purchase"]))
+                ),
+            )
+            built = BuildVisitorPredictionFeatures().execute(raw, end)
+            model = MultiHeadLogisticPredictionModel(self._prediction_model_artifact)
+            purchase_score = model.predict_visitor("purchase_score", built)
+            churn_risk = model.predict_visitor("churn_risk", built)
+            affinity = round(min(1.0, int(features["view_count"]) / 5), 4)
+            return {
+                "purchase_score": purchase_score,
+                "churn_risk": churn_risk,
+                "category_affinity": affinity,
+                "product_affinity": affinity,
+                "next_best_offer": round(purchase_score * 0.9, 4),
+            }
         purchase_score = min(
             1.0,
             0.08 * features["view_count"]

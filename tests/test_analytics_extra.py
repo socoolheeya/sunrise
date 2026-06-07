@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -152,8 +150,13 @@ async def test_inflow_revenue_segments_and_datatalk_api(client: AsyncClient):
 
     inflow = await client.get("/v1/analytics/inflow", params=params)
     revenue = await client.get("/v1/analytics/revenue-breakdown", params=params)
+    attribution = await client.get(
+        "/v1/analytics/attribution",
+        params={**params, "attribution_window_hours": 24},
+    )
     segments = await client.get("/v1/analytics/segments", params=params)
     datatalk = await client.get("/v1/analytics/datatalk", params=params)
+    snapshot = await client.post("/v1/analytics/datatalk/snapshot", params=params)
 
     assert inflow.status_code == 200
     by_channel = {row["channel"]: row for row in inflow.json()["channels"]}
@@ -165,6 +168,11 @@ async def test_inflow_revenue_segments_and_datatalk_api(client: AsyncClient):
     assert revenue.json()["total_revenue"] == 150.0
     assert revenue.json()["onsite_revenue"] == 100.0
     assert revenue.json()["attributed_revenue"] == 100.0
+    assert attribution.status_code == 200
+    by_attribution = {row["channel"]: row for row in attribution.json()["channels"]}
+    assert by_attribution["kakao"]["model"] == "last_touch"
+    assert by_attribution["kakao"]["purchase_count"] == 1
+    assert by_attribution["kakao"]["revenue"] == 100.0
     assert segments.status_code == 200
     by_visitor = {row["visitor_id"]: row for row in segments.json()["segments"]}
     assert by_visitor["v1"]["visit_segment"] == "visit_active"
@@ -172,6 +180,9 @@ async def test_inflow_revenue_segments_and_datatalk_api(client: AsyncClient):
     assert datatalk.status_code == 200
     assert datatalk.json()["metrics"]["revenue"] == 150.0
     assert datatalk.json()["metrics"]["session_count"] == 2
+    assert snapshot.status_code == 200
+    assert snapshot.json()["status"] == "frozen"
+    assert snapshot.json()["report"]["metrics"]["revenue"] == 150.0
 
 
 # ---- 캐시 동작 (FakeCache 주입) ----

@@ -205,6 +205,25 @@ class RevenueBreakdown:
         return self.onsite_revenue / self.total_revenue if self.total_revenue else 0.0
 
 
+@dataclass(frozen=True)
+class AttributionChannel:
+    channel: str
+    touchpoint_count: int
+    purchaser_count: int
+    purchase_count: int
+    revenue: float
+    model: str
+
+    @property
+    def cvr(self) -> float:
+        return self.purchaser_count / self.touchpoint_count if self.touchpoint_count else 0.0
+
+
+@dataclass(frozen=True)
+class AttributionReport:
+    channels: tuple[AttributionChannel, ...]
+
+
 # ---- 방문/구매 lifecycle segment ----
 @dataclass(frozen=True)
 class VisitorLifecycleInput:
@@ -269,3 +288,11 @@ class DataTalkReport:
     revenue_breakdown: RevenueBreakdown
     top_inflow_channels: tuple[InflowChannel, ...]
     anomalies: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DataTalkSnapshot:
+    snapshot_id: str
+    status: str
+    report: DataTalkReport
+    generated_at: datetime

@@ -67,12 +67,14 @@ class PredictionModelArtifact:
     model_version: str
     feature_version: str
     model_type: str
+    trained_at: datetime | None
     visitor_features: tuple[str, ...]
     affinity_features: tuple[str, ...]
     heads: dict[str, dict[str, float]]
     biases: dict[str, float]
     metrics: dict[str, float]
     training_data: dict[str, str | int | float]
+    drift_baseline: dict[str, float]
 
 
 @dataclass(frozen=True)

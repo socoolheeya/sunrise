@@ -9,16 +9,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audience.application.preview import AudienceRuleEvaluator, resolve_rule
+from app.audience.application.preview import AudienceRuleEvaluator, resolve_rule, rule_hash
 from app.audience.application.templates import (
     CATALOG_VERSION,
     GetAudienceTemplate,
     ListAudienceTemplates,
 )
 from app.audience.domain.model import AudienceTemplate
+from app.core.cache import Cache, get_cache
+from app.core.config import Settings, get_settings
 from app.core.database import get_session
 from app.core.tenant import require_tenant
 from app.events.registry import AUDIENCE_RESPONSE_SCHEMA_VERSION
+from app.prediction.adapters.model_registry import load_prediction_model
 
 router = APIRouter(prefix="/v1/audiences", tags=["audiences"])
 
@@ -129,6 +132,8 @@ async def preview_audience(
     payload: AudienceRuleRequest,
     tenant_id: str = Depends(require_tenant),
     session: AsyncSession = Depends(get_session),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
 ) -> AudiencePreviewResponse:
@@ -137,20 +142,31 @@ async def preview_audience(
         rule = resolve_rule(payload.template_id, payload.rule)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    preview = await AudienceRuleEvaluator(session).preview(
+    model_artifact = load_prediction_model(settings.prediction_model_path)
+    cache_key = (
+        f"{AUDIENCE_RESPONSE_SCHEMA_VERSION}:"
+        f"{tenant_id}:preview:{start.isoformat()}:{end.isoformat()}:"
+        f"{payload.sample_limit}:{rule_hash(rule)}"
+    )
+    hit = await cache.get(cache_key)
+    if hit is not None:
+        return AudiencePreviewResponse.model_validate_json(hit)
+    preview = await AudienceRuleEvaluator(session, model_artifact).preview(
         tenant_id,
         rule,
         start,
         end,
         sample_limit=payload.sample_limit,
     )
-    return AudiencePreviewResponse(
+    response = AudiencePreviewResponse(
         rule_hash=preview.rule_hash,
         matched_count=preview.matched_count,
         sample_visitor_ids=list(preview.sample_visitor_ids),
         unsupported_conditions=list(preview.unsupported_conditions),
         evaluated_at=preview.evaluated_at,
     )
+    await cache.set(cache_key, response.model_dump_json(), settings.cache_ttl_seconds)
+    return response
 
 
 @router.post("/materialize", response_model=AudienceMaterializationResponse)
@@ -158,6 +174,7 @@ async def materialize_audience(
     payload: AudienceMaterializeRequest,
     tenant_id: str = Depends(require_tenant),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
 ) -> AudienceMaterializationResponse:
@@ -166,7 +183,10 @@ async def materialize_audience(
         rule = resolve_rule(payload.template_id, payload.rule)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    materialization = await AudienceRuleEvaluator(session).materialize(
+    materialization = await AudienceRuleEvaluator(
+        session,
+        load_prediction_model(settings.prediction_model_path),
+    ).materialize(
         tenant_id,
         payload.audience_id,
         rule,

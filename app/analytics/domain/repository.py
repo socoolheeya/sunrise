@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from app.analytics.domain.model import (
+    AttributionChannel,
+    DataTalkSnapshot,
     InflowChannel,
     MetricInputs,
     RevenueBreakdown,
@@ -61,4 +63,26 @@ class AnalyticsRepository(ABC):
         self, tenant_id: str, start: datetime, end: datetime
     ) -> list[VisitorLifecycleInput]:
         """방문/구매 세그먼트 산출용 방문자별 집계."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def attribution_channels(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ) -> list[AttributionChannel]:
+        """캠페인 touchpoint 이후 구매 기여 매출을 채널별로 산출."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def save_datatalk_snapshot(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        snapshot: DataTalkSnapshot,
+    ) -> None:
+        """DataTalk 리포트 snapshot 저장."""
         raise NotImplementedError

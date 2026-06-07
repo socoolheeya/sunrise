@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from hashlib import sha256
 
 from app.analytics.domain.model import (
+    AttributionReport,
     BenchmarkReport,
     CohortReport,
     DataTalkReport,
+    DataTalkSnapshot,
     DashboardMetrics,
     Funnel,
     FunnelStep,
@@ -152,3 +155,46 @@ class GetDataTalk:
             top_inflow_channels=inflow.channels[:5],
             anomalies=tuple(anomalies),
         )
+
+
+class GetAttribution:
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ) -> AttributionReport:
+        channels = await self._repository.attribution_channels(
+            tenant_id,
+            start,
+            end,
+            attribution_window_hours,
+        )
+        channels.sort(key=lambda item: item.revenue, reverse=True)
+        return AttributionReport(channels=tuple(channels))
+
+
+class CreateDataTalkSnapshot:
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> DataTalkSnapshot:
+        report = await GetDataTalk(self._repository).execute(tenant_id, start, end)
+        generated_at = datetime.now(timezone.utc)
+        snapshot_id = sha256(
+            f"{tenant_id}:{start.isoformat()}:{end.isoformat()}".encode("utf-8")
+        ).hexdigest()[:24]
+        snapshot = DataTalkSnapshot(
+            snapshot_id=snapshot_id,
+            status="frozen",
+            report=report,
+            generated_at=generated_at,
+        )
+        await self._repository.save_datatalk_snapshot(tenant_id, start, end, snapshot)
+        return snapshot

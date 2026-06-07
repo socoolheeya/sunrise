@@ -21,6 +21,8 @@ from app.analytics.adapters.clickhouse import (
 )
 from app.analytics.adapters.repository import SqlAnalyticsRepository
 from app.analytics.application.queries import (
+    CreateDataTalkSnapshot,
+    GetAttribution,
     GetBenchmark,
     GetCohort,
     GetDataTalk,
@@ -132,6 +134,24 @@ class RevenueBreakdownResponse(BaseModel):
     onsite_coverage_rate: float
 
 
+class AttributionChannelResponse(BaseModel):
+    channel: str
+    touchpoint_count: int
+    purchaser_count: int
+    purchase_count: int
+    revenue: float
+    cvr: float
+    model: str
+
+
+class AttributionResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    start: datetime
+    end: datetime
+    attribution_window_hours: int
+    channels: list[AttributionChannelResponse]
+
+
 class LifecycleSegmentResponse(BaseModel):
     visitor_id: str
     visit_segment: str
@@ -160,6 +180,14 @@ class DataTalkResponse(BaseModel):
     revenue_breakdown: RevenueBreakdownResponse
     top_inflow_channels: list[InflowChannelResponse]
     anomalies: list[str]
+
+
+class DataTalkSnapshotResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    snapshot_id: str
+    status: str
+    generated_at: datetime
+    report: DataTalkResponse
 
 
 # ---- 의존성 ----
@@ -230,6 +258,61 @@ def _cache_key(
     return (
         f"{ANALYTICS_RESPONSE_SCHEMA_VERSION}:"
         f"{tenant_id}:{resource}:{start.isoformat()}:{end.isoformat()}"
+    )
+
+
+def _datatalk_response(
+    start: datetime,
+    end: datetime,
+    report,
+) -> DataTalkResponse:
+    metrics = DashboardResponse(
+        schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+        start=start,
+        end=end,
+        revenue=report.metrics.revenue,
+        session_count=report.metrics.session_count,
+        visitor_count=report.metrics.visitor_count,
+        purchase_count=report.metrics.purchase_count,
+        cvr=report.metrics.cvr,
+        aov=report.metrics.aov,
+        repeat_rate=report.metrics.repeat_rate,
+    )
+    revenue = report.revenue_breakdown
+    revenue_response = RevenueBreakdownResponse(
+        schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+        start=start,
+        end=end,
+        total_revenue=revenue.total_revenue,
+        onsite_revenue=revenue.onsite_revenue,
+        hidden_revenue=revenue.hidden_revenue,
+        attributed_revenue=revenue.attributed_revenue,
+        onsite_coverage_rate=revenue.onsite_coverage_rate,
+    )
+    return DataTalkResponse(
+        schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+        start=start,
+        end=end,
+        metrics=metrics,
+        funnel=[
+            DataTalkFunnelStepResponse(name=step.name, visitors=step.visitors)
+            for step in report.funnel.steps
+        ],
+        revenue_breakdown=revenue_response,
+        top_inflow_channels=[
+            InflowChannelResponse(
+                channel=channel.channel,
+                session_count=channel.session_count,
+                visitor_count=channel.visitor_count,
+                purchaser_count=channel.purchaser_count,
+                purchase_count=channel.purchase_count,
+                revenue=channel.revenue,
+                cvr=channel.cvr,
+                aov=channel.aov,
+            )
+            for channel in report.top_inflow_channels
+        ],
+        anomalies=list(report.anomalies),
     )
 
 
@@ -451,6 +534,50 @@ async def revenue_breakdown(
     )
 
 
+@router.get("/attribution", response_model=AttributionResponse)
+async def attribution(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    attribution_window_hours: int = Query(default=72, ge=1, le=720),
+) -> AttributionResponse:
+    start, end = _default_window(start, end)
+    key = f"{_cache_key(tenant_id, 'attribution', start, end)}:{attribution_window_hours}"
+
+    async def compute() -> AttributionResponse:
+        report = await GetAttribution(repo).execute(
+            tenant_id,
+            start,
+            end,
+            attribution_window_hours,
+        )
+        return AttributionResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            attribution_window_hours=attribution_window_hours,
+            channels=[
+                AttributionChannelResponse(
+                    channel=channel.channel,
+                    touchpoint_count=channel.touchpoint_count,
+                    purchaser_count=channel.purchaser_count,
+                    purchase_count=channel.purchase_count,
+                    revenue=channel.revenue,
+                    cvr=channel.cvr,
+                    model=channel.model,
+                )
+                for channel in report.channels
+            ],
+        )
+
+    return await _cached(
+        cache, key, settings.cache_ttl_seconds, AttributionResponse, compute
+    )
+
+
 @router.get("/segments", response_model=LifecycleSegmentReportResponse)
 async def segments(
     tenant_id: str = Depends(require_tenant),
@@ -505,58 +632,26 @@ async def datatalk(
 
     async def compute() -> DataTalkResponse:
         report = await GetDataTalk(repo).execute(tenant_id, start, end)
-        metrics = DashboardResponse(
-            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
-            start=start,
-            end=end,
-            revenue=report.metrics.revenue,
-            session_count=report.metrics.session_count,
-            visitor_count=report.metrics.visitor_count,
-            purchase_count=report.metrics.purchase_count,
-            cvr=report.metrics.cvr,
-            aov=report.metrics.aov,
-            repeat_rate=report.metrics.repeat_rate,
-        )
-        revenue = report.revenue_breakdown
-        revenue_response = RevenueBreakdownResponse(
-            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
-            start=start,
-            end=end,
-            total_revenue=revenue.total_revenue,
-            onsite_revenue=revenue.onsite_revenue,
-            hidden_revenue=revenue.hidden_revenue,
-            attributed_revenue=revenue.attributed_revenue,
-            onsite_coverage_rate=revenue.onsite_coverage_rate,
-        )
-        return DataTalkResponse(
-            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
-            start=start,
-            end=end,
-            metrics=metrics,
-            funnel=[
-                DataTalkFunnelStepResponse(
-                    name=step.name,
-                    visitors=step.visitors,
-                )
-                for step in report.funnel.steps
-            ],
-            revenue_breakdown=revenue_response,
-            top_inflow_channels=[
-                InflowChannelResponse(
-                    channel=channel.channel,
-                    session_count=channel.session_count,
-                    visitor_count=channel.visitor_count,
-                    purchaser_count=channel.purchaser_count,
-                    purchase_count=channel.purchase_count,
-                    revenue=channel.revenue,
-                    cvr=channel.cvr,
-                    aov=channel.aov,
-                )
-                for channel in report.top_inflow_channels
-            ],
-            anomalies=list(report.anomalies),
-        )
+        return _datatalk_response(start, end, report)
 
     return await _cached(
         cache, key, settings.cache_ttl_seconds, DataTalkResponse, compute
+    )
+
+
+@router.post("/datatalk/snapshot", response_model=DataTalkSnapshotResponse)
+async def create_datatalk_snapshot(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+) -> DataTalkSnapshotResponse:
+    start, end = _default_window(start, end)
+    snapshot = await CreateDataTalkSnapshot(repo).execute(tenant_id, start, end)
+    return DataTalkSnapshotResponse(
+        schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+        snapshot_id=snapshot.snapshot_id,
+        status=snapshot.status,
+        generated_at=snapshot.generated_at,
+        report=_datatalk_response(start, end, snapshot.report),
     )

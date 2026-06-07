@@ -103,11 +103,14 @@ class ModelStatusResponse(BaseModel):
     model_version: str
     feature_version: str
     model_type: str
+    trained_at: datetime | None
+    model_age_days: int | None
     heads: list[str]
     visitor_features: list[str]
     affinity_features: list[str]
     metrics: dict[str, float]
     training_data: dict[str, str | int | float]
+    drift_baseline: dict[str, float]
     readiness: str
     drift_status: str
     loaded_at: datetime
@@ -185,11 +188,29 @@ def _metadata_response(metadata) -> PredictionMetadataResponse:
     )
 
 
-def _readiness(model: PredictionModelArtifact) -> str:
+def _readiness(model: PredictionModelArtifact, now: datetime) -> str:
     required_metrics = ("purchase_auc", "churn_auc", "affinity_auc")
-    if all(model.metrics.get(metric, 0.0) >= 0.5 for metric in required_metrics):
+    metrics_ready = all(model.metrics.get(metric, 0.0) >= 0.5 for metric in required_metrics)
+    if not metrics_ready:
+        return "degraded"
+    if model.trained_at is not None:
+        trained_at = model.trained_at
+        if trained_at.tzinfo is None and now.tzinfo is not None:
+            trained_at = trained_at.replace(tzinfo=now.tzinfo)
+        if (now - trained_at).days > 90:
+            return "stale"
+    if model.drift_baseline:
         return "ready"
-    return "degraded"
+    return "baseline_missing"
+
+
+def _model_age_days(model: PredictionModelArtifact, now: datetime) -> int | None:
+    if model.trained_at is None:
+        return None
+    trained_at = model.trained_at
+    if trained_at.tzinfo is None and now.tzinfo is not None:
+        trained_at = trained_at.replace(tzinfo=now.tzinfo)
+    return max(0, (now - trained_at).days)
 
 
 def _top_reason(feature: str, contribution: float, target: str) -> str:
@@ -201,18 +222,22 @@ def _top_reason(feature: str, contribution: float, target: str) -> str:
 async def model_status(
     model_artifact: PredictionModelArtifact = Depends(get_prediction_model),
 ) -> ModelStatusResponse:
+    now = datetime.now(timezone.utc)
     return ModelStatusResponse(
         model_version=model_artifact.model_version,
         feature_version=model_artifact.feature_version,
         model_type=model_artifact.model_type,
+        trained_at=model_artifact.trained_at,
+        model_age_days=_model_age_days(model_artifact, now),
         heads=sorted(model_artifact.heads.keys()),
         visitor_features=list(model_artifact.visitor_features),
         affinity_features=list(model_artifact.affinity_features),
         metrics=dict(model_artifact.metrics),
         training_data=dict(model_artifact.training_data),
-        readiness=_readiness(model_artifact),
-        drift_status="not_configured",
-        loaded_at=datetime.now(timezone.utc),
+        drift_baseline=dict(model_artifact.drift_baseline),
+        readiness=_readiness(model_artifact, now),
+        drift_status=("baseline_configured" if model_artifact.drift_baseline else "not_configured"),
+        loaded_at=now,
     )
 
 

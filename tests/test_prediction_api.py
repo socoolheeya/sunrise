@@ -106,6 +106,10 @@ async def test_prediction_model_status_api(client: AsyncClient):
     assert body["schema_version"] == "prediction-response.v1"
     assert body["model_version"] == "ml.logistic-prediction.v2"
     assert body["readiness"] == "ready"
+    assert body["drift_status"] == "baseline_configured"
+    assert body["trained_at"] == "2026-06-03T00:00:00Z"
+    assert body["model_age_days"] >= 0
+    assert body["drift_baseline"]["view_signal"] > 0
     assert {"purchase_score", "churn_risk", "product_affinity"} <= set(body["heads"])
     assert body["metrics"]["purchase_auc"] >= 0.5
 
