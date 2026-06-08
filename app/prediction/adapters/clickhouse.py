@@ -55,7 +55,8 @@ class ClickHousePredictionRepository(PredictionRepository):
                 countIf(type = 'purchase') AS purchase_count,
                 coalesce(sumIf(amount, type = 'purchase'), 0) AS revenue,
                 max(occurred_at) AS last_seen_at,
-                maxIf(occurred_at, type = 'purchase') AS last_purchase_at
+                maxIf(occurred_at, type = 'purchase') AS last_purchase_at,
+                minIf(occurred_at, type = 'purchase') AS first_purchase_at
             FROM {self._events_table}
             WHERE tenant_id = {{tenant_id:String}}
               AND visitor_id IN {{visitor_ids:Array(String)}}
@@ -82,6 +83,7 @@ class ClickHousePredictionRepository(PredictionRepository):
                 revenue=float(row.get("revenue") or 0.0),
                 last_seen_at=_empty_epoch_to_none(row.get("last_seen_at")),
                 last_purchase_at=_empty_epoch_to_none(row.get("last_purchase_at")),
+                first_purchase_at=_empty_epoch_to_none(row.get("first_purchase_at")),
             )
             for row in rows
         }
@@ -99,6 +101,46 @@ class ClickHousePredictionRepository(PredictionRepository):
                 ),
             )
             for visitor_id in visitor_ids
+        ]
+
+    async def population_features(
+        self, tenant_id: str, start: datetime, end: datetime, *, limit: int = 50_000
+    ) -> list[VisitorFeatures]:
+        sql = f"""
+        SELECT
+            visitor_id,
+            countIf(type = 'view') AS view_count,
+            countIf(type = 'cart_add') AS cart_add_count,
+            countIf(type = 'purchase') AS purchase_count,
+            coalesce(sumIf(amount, type = 'purchase'), 0) AS revenue,
+            max(occurred_at) AS last_seen_at,
+            maxIf(occurred_at, type = 'purchase') AS last_purchase_at,
+            minIf(occurred_at, type = 'purchase') AS first_purchase_at
+        FROM {self._events_table}
+        WHERE tenant_id = {{tenant_id:String}}
+          AND occurred_at >= {{start:DateTime}}
+          AND occurred_at < {{end:DateTime}}
+        GROUP BY visitor_id
+        HAVING countIf(type = 'purchase') > 0
+        LIMIT {{limit:UInt64}}
+        """
+        rows = await _query_rows(
+            self._client,
+            sql,
+            {"tenant_id": tenant_id, "start": start, "end": end, "limit": limit},
+        )
+        return [
+            VisitorFeatures(
+                visitor_id=str(row["visitor_id"]),
+                view_count=int(row.get("view_count") or 0),
+                cart_add_count=int(row.get("cart_add_count") or 0),
+                purchase_count=int(row.get("purchase_count") or 0),
+                revenue=float(row.get("revenue") or 0.0),
+                last_seen_at=_empty_epoch_to_none(row.get("last_seen_at")),
+                last_purchase_at=_empty_epoch_to_none(row.get("last_purchase_at")),
+                first_purchase_at=_empty_epoch_to_none(row.get("first_purchase_at")),
+            )
+            for row in rows
         ]
 
     async def product_signals(

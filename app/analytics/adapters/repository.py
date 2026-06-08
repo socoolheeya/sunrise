@@ -9,24 +9,38 @@ lite 버전은 events 원본 테이블을 직접 집계한다. 운영에서는 �
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import asdict
 
-from sqlalchemy import ColumnElement, and_, func, select
+from sqlalchemy import ColumnElement, and_, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.domain.cohort import build_cohort_rows, cohort_event_types
 from app.analytics.domain.model import (
     AttributionChannel,
+    CohortCell,
+    CohortReport,
+    CohortRow,
     DataTalkSnapshot,
     InflowChannel,
+    LifecycleSegment,
     MetricInputs,
     RevenueBreakdown,
     VisitorLifecycleInput,
+    purchase_segment,
+    visit_segment,
 )
+from app.analytics.domain.order_fact import OrderEvent, fold_order_facts
 from app.analytics.domain.repository import AnalyticsRepository
-from app.core.orm import DataTalkSnapshotRow, EventRow
+from app.core.orm import (
+    CohortRetentionRow,
+    CustomerSegmentDailyRow,
+    DataTalkSnapshotRow,
+    EventRow,
+    OrderFactRow,
+)
 
 
 class SqlAnalyticsRepository(AnalyticsRepository):
@@ -369,3 +383,265 @@ class SqlAnalyticsRepository(AnalyticsRepository):
         )
         await self._session.execute(stmt)
         await self._session.commit()
+
+    async def refresh_order_facts(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ) -> int:
+        rows = await self._session.execute(
+            select(
+                EventRow.visitor_id,
+                EventRow.order_id,
+                EventRow.type,
+                EventRow.amount,
+                EventRow.occurred_at,
+                EventRow.session_id,
+                EventRow.utm_medium,
+                EventRow.utm_source,
+                EventRow.category,
+            ).where(self._tenant_window(tenant_id, start, end))
+        )
+        events = [
+            OrderEvent(
+                visitor_id=visitor_id,
+                order_id=order_id,
+                type=event_type,
+                amount=float(amount or 0.0),
+                occurred_at=occurred_at,
+                session_id=session_id,
+                utm_medium=utm_medium,
+                utm_source=utm_source,
+                category=category,
+            )
+            for (
+                visitor_id,
+                order_id,
+                event_type,
+                amount,
+                occurred_at,
+                session_id,
+                utm_medium,
+                utm_source,
+                category,
+            ) in rows.all()
+        ]
+        facts = fold_order_facts(
+            tenant_id, events, attribution_window_hours=attribution_window_hours
+        )
+        now = datetime.now(tz=timezone.utc)
+        bind = self._session.get_bind()
+        insert = sqlite_insert if bind.dialect.name == "sqlite" else pg_insert
+        for fact in facts:
+            values = {
+                "tenant_id": fact.tenant_id,
+                "order_id": fact.order_id,
+                "visitor_id": fact.visitor_id,
+                "amount": fact.amount,
+                "status": fact.status,
+                "channel": fact.channel,
+                "onsite_matched": fact.onsite_matched,
+                "attributed": fact.attributed,
+                "attributed_channel": fact.attributed_channel,
+                "occurred_at": fact.occurred_at,
+                "created_at": now,
+                "updated_at": now,
+            }
+            stmt = insert(OrderFactRow).values(**values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["tenant_id", "order_id"],
+                set_={
+                    "visitor_id": values["visitor_id"],
+                    "amount": values["amount"],
+                    "status": values["status"],
+                    "channel": values["channel"],
+                    "onsite_matched": values["onsite_matched"],
+                    "attributed": values["attributed"],
+                    "attributed_channel": values["attributed_channel"],
+                    "occurred_at": values["occurred_at"],
+                    "updated_at": values["updated_at"],
+                },
+            )
+            await self._session.execute(stmt)
+        await self._session.commit()
+        return len(facts)
+
+    async def order_revenue_breakdown(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> RevenueBreakdown:
+        rows = await self._session.execute(
+            select(
+                OrderFactRow.amount,
+                OrderFactRow.status,
+                OrderFactRow.onsite_matched,
+                OrderFactRow.attributed,
+            ).where(
+                and_(
+                    OrderFactRow.tenant_id == tenant_id,
+                    OrderFactRow.occurred_at >= start,
+                    OrderFactRow.occurred_at < end,
+                )
+            )
+        )
+        total = 0.0
+        onsite = 0.0
+        attributed = 0.0
+        for amount, status, onsite_matched, is_attributed in rows.all():
+            if status != "completed":
+                continue
+            value = float(amount or 0.0)
+            total += value
+            if onsite_matched:
+                onsite += value
+            if is_attributed:
+                attributed += value
+        return RevenueBreakdown(
+            total_revenue=total,
+            onsite_revenue=onsite,
+            attributed_revenue=attributed,
+        )
+
+    async def refresh_lifecycle_segments(
+        self, tenant_id: str, start: datetime, end: datetime, as_of: datetime
+    ) -> int:
+        inputs = await self.lifecycle_inputs(tenant_id, start, end)
+        now = datetime.now(tz=timezone.utc)
+        bind = self._session.get_bind()
+        insert = sqlite_insert if bind.dialect.name == "sqlite" else pg_insert
+        for item in inputs:
+            values = {
+                "tenant_id": tenant_id,
+                "customer_id": item.visitor_id,
+                "as_of": as_of,
+                "visit_segment": visit_segment(as_of, item.last_seen_at),
+                "purchase_segment": purchase_segment(
+                    as_of, item.purchase_count, item.last_purchase_at
+                ),
+                "revenue": item.revenue,
+                "created_at": now,
+                "updated_at": now,
+            }
+            stmt = insert(CustomerSegmentDailyRow).values(**values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["tenant_id", "customer_id", "as_of"],
+                set_={
+                    "visit_segment": values["visit_segment"],
+                    "purchase_segment": values["purchase_segment"],
+                    "revenue": values["revenue"],
+                    "updated_at": values["updated_at"],
+                },
+            )
+            await self._session.execute(stmt)
+        await self._session.commit()
+        return len(inputs)
+
+    async def segment_snapshot(
+        self, tenant_id: str, as_of: datetime
+    ) -> list[LifecycleSegment]:
+        rows = await self._session.execute(
+            select(
+                CustomerSegmentDailyRow.customer_id,
+                CustomerSegmentDailyRow.visit_segment,
+                CustomerSegmentDailyRow.purchase_segment,
+                CustomerSegmentDailyRow.revenue,
+            ).where(
+                and_(
+                    CustomerSegmentDailyRow.tenant_id == tenant_id,
+                    CustomerSegmentDailyRow.as_of == as_of,
+                )
+            )
+        )
+        return [
+            LifecycleSegment(
+                visitor_id=customer_id,
+                visit_segment=vseg,
+                purchase_segment=pseg,
+                revenue=float(revenue or 0.0),
+            )
+            for customer_id, vseg, pseg, revenue in rows.all()
+        ]
+
+    async def refresh_cohort_retention(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        cohort_type: str,
+        granularity: str,
+        max_offset: int,
+    ) -> int:
+        types = cohort_event_types(cohort_type)
+        rows = await self._session.execute(
+            select(EventRow.visitor_id, EventRow.occurred_at).where(
+                and_(
+                    self._tenant_window(tenant_id, start, end),
+                    EventRow.type.in_(types),
+                )
+            )
+        )
+        records = [(visitor_id, occurred_at) for visitor_id, occurred_at in rows.all()]
+        cohort_rows = build_cohort_rows(
+            records, granularity=granularity, max_offset=max_offset
+        )
+        # 재머티리얼라이즈는 셀 수가 줄어들 수 있으므로 기존 셀을 지우고 다시 쓴다.
+        await self._session.execute(
+            delete(CohortRetentionRow).where(
+                and_(
+                    CohortRetentionRow.tenant_id == tenant_id,
+                    CohortRetentionRow.cohort_type == cohort_type,
+                    CohortRetentionRow.granularity == granularity,
+                )
+            )
+        )
+        now = datetime.now(tz=timezone.utc)
+        cell_count = 0
+        for row in cohort_rows:
+            for cell in row.cells:
+                self._session.add(
+                    CohortRetentionRow(
+                        tenant_id=tenant_id,
+                        cohort_type=cohort_type,
+                        granularity=granularity,
+                        cohort=row.cohort,
+                        offset=cell.offset,
+                        base_count=row.size,
+                        retained_count=cell.active,
+                        retention_rate=cell.rate,
+                        created_at=now,
+                    )
+                )
+                cell_count += 1
+        await self._session.commit()
+        return cell_count
+
+    async def cohort_retention(
+        self, tenant_id: str, cohort_type: str, granularity: str
+    ) -> CohortReport:
+        rows = await self._session.execute(
+            select(
+                CohortRetentionRow.cohort,
+                CohortRetentionRow.offset,
+                CohortRetentionRow.base_count,
+                CohortRetentionRow.retained_count,
+                CohortRetentionRow.retention_rate,
+            )
+            .where(
+                and_(
+                    CohortRetentionRow.tenant_id == tenant_id,
+                    CohortRetentionRow.cohort_type == cohort_type,
+                    CohortRetentionRow.granularity == granularity,
+                )
+            )
+            .order_by(CohortRetentionRow.cohort, CohortRetentionRow.offset)
+        )
+        by_cohort: dict[str, tuple[int, list[CohortCell]]] = {}
+        for cohort, offset, base_count, retained_count, rate in rows.all():
+            _, cells = by_cohort.setdefault(cohort, (base_count, []))
+            cells.append(CohortCell(offset=offset, active=retained_count, rate=rate))
+        report_rows = tuple(
+            CohortRow(cohort=cohort, size=size, cells=tuple(cells))
+            for cohort, (size, cells) in by_cohort.items()
+        )
+        return CohortReport(rows=report_rows)

@@ -71,6 +71,14 @@ class KafkaPublishError(RuntimeError):
     """Raised when publishing a tracking event to Kafka fails."""
 
 
+class OutboxSpool(Protocol):
+    """Kafka 발행 실패 시 이벤트를 보존하는 내구성 backstop."""
+
+    async def pending_count(self, tenant_id: str) -> int: ...
+
+    async def enqueue(self, event: TrackingEvent, topic: str) -> None: ...
+
+
 class KafkaEventRepository(EventRepository):
     """EventRepository 구현체: 배치 내부 중복 제거 후 Kafka 로 발행."""
 
@@ -82,12 +90,16 @@ class KafkaEventRepository(EventRepository):
         dlq_topic: str | None = None,
         publish_attempts: int = 3,
         metrics: IngestionMetrics | None = None,
+        outbox: OutboxSpool | None = None,
+        outbox_max_pending: int = 100_000,
     ) -> None:
         self._producer = producer
         self._topic = topic
         self._dlq_topic = dlq_topic
         self._publish_attempts = max(1, publish_attempts)
         self._metrics = metrics or get_ingestion_metrics()
+        self._outbox = outbox
+        self._outbox_max_pending = outbox_max_pending
 
     async def save_batch(self, events: list[TrackingEvent]) -> IngestResult:
         if not events:
@@ -123,6 +135,19 @@ class KafkaEventRepository(EventRepository):
         error = last_error or RuntimeError("unknown Kafka publish failure")
         self._metrics.record_publish_failure()
         await self._publish_dlq(event, error)
+
+        # 내구성 backstop: Kafka(+DLQ) 실패 시 outbox 에 보존하고 ack(at-least-once).
+        # 단 backlog 이 상한을 넘으면 load shedding(503)으로 폭주를 막는다.
+        if self._outbox is not None:
+            if await self._outbox.pending_count(event.tenant_id) >= self._outbox_max_pending:
+                self._metrics.record_outbox_backpressure()
+                raise KafkaPublishError(
+                    f"ingestion outbox backlog exceeded for tenant {event.tenant_id}"
+                ) from error
+            await self._outbox.enqueue(event, self._topic)
+            self._metrics.record_outbox_enqueued()
+            return
+
         raise KafkaPublishError(
             f"failed to publish event {event.event_id} to {self._topic}"
         ) from error

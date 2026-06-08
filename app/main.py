@@ -28,6 +28,7 @@ from app.ingestion.adapters.http import close_ingestion_sink, configure_ingestio
 from app.onsite.adapters.http import router as onsite_router
 from app.prediction.adapters.http import router as prediction_router
 from app.recommendation.adapters.http import router as recommendation_router
+from app.registry.adapters.http import router as registry_router
 
 
 @asynccontextmanager
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(recommendation_router)
     app.include_router(onsite_router)
     app.include_router(ai_router)
+    app.include_router(registry_router)
 
     @app.exception_handler(ClickHouseQueryError)
     async def clickhouse_query_error_handler(_, __) -> JSONResponse:

@@ -69,3 +69,4 @@ class OnsiteDecision:
     items: tuple[OnsiteRecommendationItem, ...]
     frequency_cap_key: str
     generated_at: datetime
+    experiment_group: str | None = None

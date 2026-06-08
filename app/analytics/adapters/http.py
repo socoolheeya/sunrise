@@ -25,12 +25,18 @@ from app.analytics.application.queries import (
     GetAttribution,
     GetBenchmark,
     GetCohort,
+    GetCohortRetention,
     GetDataTalk,
     GetDashboardMetrics,
     GetFunnel,
     GetInflow,
     GetLifecycleSegments,
+    GetOrderRevenueBreakdown,
     GetRevenueBreakdown,
+    GetSegmentTransitions,
+    RefreshCohortRetention,
+    RefreshLifecycleSegments,
+    RefreshOrderFacts,
 )
 from app.core.cache import Cache, get_cache
 from app.core.clickhouse_migrations import apply_clickhouse_migrations
@@ -91,6 +97,20 @@ class CohortResponse(BaseModel):
     rows: list[CohortRowResponse]
 
 
+class CohortRefreshResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    cohort_type: str
+    granularity: str
+    materialized_cells: int
+
+
+class CohortRetentionResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    cohort_type: str
+    granularity: str
+    rows: list[CohortRowResponse]
+
+
 class BenchmarkMetricResponse(BaseModel):
     name: str
     tenant: float
@@ -134,6 +154,13 @@ class RevenueBreakdownResponse(BaseModel):
     onsite_coverage_rate: float
 
 
+class OrderFactRefreshResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    start: datetime
+    end: datetime
+    materialized_orders: int
+
+
 class AttributionChannelResponse(BaseModel):
     channel: str
     touchpoint_count: int
@@ -164,6 +191,27 @@ class LifecycleSegmentReportResponse(BaseModel):
     start: datetime
     end: datetime
     segments: list[LifecycleSegmentResponse]
+
+
+class SegmentRefreshResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    as_of: datetime
+    materialized_customers: int
+
+
+class SegmentTransitionItemResponse(BaseModel):
+    from_segment: str
+    to_segment: str
+    customer_count: int
+    transition_rate: float
+
+
+class SegmentTransitionReportResponse(BaseModel):
+    schema_version: str = ANALYTICS_RESPONSE_SCHEMA_VERSION
+    segment_type: str
+    as_of_from: datetime
+    as_of_to: datetime
+    transitions: list[SegmentTransitionItemResponse]
 
 
 class DataTalkFunnelStepResponse(BaseModel):
@@ -207,6 +255,7 @@ def get_analytics_repo(
             client,
             settings.clickhouse_events_table,
             metric_daily_table=settings.clickhouse_metric_daily_table,
+            snapshot_session=session,
         )
     return SqlAnalyticsRepository(session)
 
@@ -434,6 +483,91 @@ async def cohort(
     )
 
 
+def _validate_cohort_params(cohort_type: str, granularity: str) -> None:
+    if cohort_type not in {"visit", "purchase"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="cohort_type must be 'visit' or 'purchase'",
+        )
+    if granularity not in {"day", "week", "month"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="granularity must be 'day', 'week', or 'month'",
+        )
+
+
+def _cohort_rows_response(report) -> list[CohortRowResponse]:
+    return [
+        CohortRowResponse(
+            cohort=row.cohort,
+            size=row.size,
+            cells=[
+                CohortCellResponse(offset=cell.offset, active=cell.active, rate=cell.rate)
+                for cell in row.cells
+            ],
+        )
+        for row in report.rows
+    ]
+
+
+@router.post("/cohort/refresh", response_model=CohortRefreshResponse)
+async def refresh_cohort(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    cohort_type: str = Query(default="purchase"),
+    granularity: str = Query(default="month"),
+    max_offset: int = Query(default=11, ge=0, le=60),
+) -> CohortRefreshResponse:
+    _validate_cohort_params(cohort_type, granularity)
+    start, end = _default_window(start, end)
+    count = await RefreshCohortRetention(repo).execute(
+        tenant_id, start, end, cohort_type, granularity, max_offset
+    )
+    await cache.delete(
+        f"{ANALYTICS_RESPONSE_SCHEMA_VERSION}:{tenant_id}:cohort-retention:{cohort_type}:{granularity}"
+    )
+    return CohortRefreshResponse(
+        schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+        cohort_type=cohort_type,
+        granularity=granularity,
+        materialized_cells=count,
+    )
+
+
+@router.get("/cohort/retention", response_model=CohortRetentionResponse)
+async def cohort_retention(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    cohort_type: str = Query(default="purchase"),
+    granularity: str = Query(default="month"),
+) -> CohortRetentionResponse:
+    _validate_cohort_params(cohort_type, granularity)
+    key = (
+        f"{ANALYTICS_RESPONSE_SCHEMA_VERSION}:{tenant_id}:"
+        f"cohort-retention:{cohort_type}:{granularity}"
+    )
+
+    async def compute() -> CohortRetentionResponse:
+        report = await GetCohortRetention(repo).execute(
+            tenant_id, cohort_type, granularity
+        )
+        return CohortRetentionResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            cohort_type=cohort_type,
+            granularity=granularity,
+            rows=_cohort_rows_response(report),
+        )
+
+    return await _cached(
+        cache, key, settings.cache_ttl_seconds, CohortRetentionResponse, compute
+    )
+
+
 @router.get("/benchmark", response_model=BenchmarkResponse)
 async def benchmark(
     tenant_id: str = Depends(require_tenant),
@@ -504,7 +638,19 @@ async def inflow(
     return await _cached(cache, key, settings.cache_ttl_seconds, InflowResponse, compute)
 
 
-@router.get("/revenue-breakdown", response_model=RevenueBreakdownResponse)
+@router.get(
+    "/revenue-breakdown",
+    response_model=RevenueBreakdownResponse,
+    deprecated=True,
+    summary="[deprecated] 매출 breakdown (방문자-touch 근사)",
+    description=(
+        "DEPRECATED: onsite_revenue 를 '캠페인 접촉 방문자 구매'로 근사한다. "
+        "주문 원장(order_fact) 기반 정확 산출은 "
+        "GET /v1/analytics/order-fact/revenue-breakdown 을 사용하라. "
+        "(total/hidden 은 양쪽 모두 order_id 단위 dedup. 차이는 onsite 정의: "
+        "근사=캠페인 접촉, 정확=세션 추적 onsite_matched.)"
+    ),
+)
 async def revenue_breakdown(
     tenant_id: str = Depends(require_tenant),
     repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
@@ -518,6 +664,62 @@ async def revenue_breakdown(
 
     async def compute() -> RevenueBreakdownResponse:
         report = await GetRevenueBreakdown(repo).execute(tenant_id, start, end)
+        return RevenueBreakdownResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            start=start,
+            end=end,
+            total_revenue=report.total_revenue,
+            onsite_revenue=report.onsite_revenue,
+            hidden_revenue=report.hidden_revenue,
+            attributed_revenue=report.attributed_revenue,
+            onsite_coverage_rate=report.onsite_coverage_rate,
+        )
+
+    return await _cached(
+        cache, key, settings.cache_ttl_seconds, RevenueBreakdownResponse, compute
+    )
+
+
+@router.post("/order-fact/refresh", response_model=OrderFactRefreshResponse)
+async def refresh_order_facts(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    attribution_window_hours: int = Query(default=24, ge=1, le=720),
+) -> OrderFactRefreshResponse:
+    start, end = _default_window(start, end)
+    count = await RefreshOrderFacts(repo).execute(
+        tenant_id, start, end, attribution_window_hours
+    )
+    # 머티리얼라이즈 후 동일 윈도우의 order-fact breakdown 캐시를 무효화해
+    # refresh 직후 조회가 stale 값을 반환하지 않도록 한다.
+    await cache.delete(
+        _cache_key(tenant_id, "order-fact-revenue-breakdown", start, end)
+    )
+    return OrderFactRefreshResponse(
+        schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+        start=start,
+        end=end,
+        materialized_orders=count,
+    )
+
+
+@router.get("/order-fact/revenue-breakdown", response_model=RevenueBreakdownResponse)
+async def order_revenue_breakdown(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+) -> RevenueBreakdownResponse:
+    start, end = _default_window(start, end)
+    key = _cache_key(tenant_id, "order-fact-revenue-breakdown", start, end)
+
+    async def compute() -> RevenueBreakdownResponse:
+        report = await GetOrderRevenueBreakdown(repo).execute(tenant_id, start, end)
         return RevenueBreakdownResponse(
             schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
             start=start,
@@ -615,6 +817,80 @@ async def segments(
 
     return await _cached(
         cache, key, settings.cache_ttl_seconds, LifecycleSegmentReportResponse, compute
+    )
+
+
+def _segments_transitions_prefix(tenant_id: str) -> str:
+    return f"{ANALYTICS_RESPONSE_SCHEMA_VERSION}:{tenant_id}:segments-transitions:"
+
+
+@router.post("/segments/refresh", response_model=SegmentRefreshResponse)
+async def refresh_segments(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    as_of: datetime | None = Query(default=None),
+) -> SegmentRefreshResponse:
+    start, end = _default_window(start, end)
+    # as_of 미지정 시 윈도우 end(일 경계)를 스냅샷 기준 시각으로 사용.
+    reference = as_of or end
+    count = await RefreshLifecycleSegments(repo).execute(
+        tenant_id, start, end, reference
+    )
+    # 스냅샷이 바뀌면 이 테넌트의 모든 transition 결과 캐시를 무효화한다.
+    # (transition 키는 from/to 쌍에 의존하므로 접두사 단위로 일괄 삭제.)
+    await cache.delete_prefix(_segments_transitions_prefix(tenant_id))
+    return SegmentRefreshResponse(
+        schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+        as_of=reference,
+        materialized_customers=count,
+    )
+
+
+@router.get("/segments/transitions", response_model=SegmentTransitionReportResponse)
+async def segment_transitions(
+    tenant_id: str = Depends(require_tenant),
+    repo: SqlAnalyticsRepository = Depends(get_analytics_repo),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
+    as_of_from: datetime = Query(alias="from"),
+    as_of_to: datetime = Query(alias="to"),
+    segment_type: str = Query(default="visit"),
+) -> SegmentTransitionReportResponse:
+    if segment_type not in {"visit", "purchase"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="segment_type must be 'visit' or 'purchase'",
+        )
+    key = (
+        f"{_segments_transitions_prefix(tenant_id)}"
+        f"{segment_type}:{as_of_from.isoformat()}:{as_of_to.isoformat()}"
+    )
+
+    async def compute() -> SegmentTransitionReportResponse:
+        report = await GetSegmentTransitions(repo).execute(
+            tenant_id, as_of_from, as_of_to, segment_type
+        )
+        return SegmentTransitionReportResponse(
+            schema_version=ANALYTICS_RESPONSE_SCHEMA_VERSION,
+            segment_type=report.segment_type,
+            as_of_from=as_of_from,
+            as_of_to=as_of_to,
+            transitions=[
+                SegmentTransitionItemResponse(
+                    from_segment=item.from_segment,
+                    to_segment=item.to_segment,
+                    customer_count=item.customer_count,
+                    transition_rate=item.transition_rate,
+                )
+                for item in report.transitions
+            ],
+        )
+
+    return await _cached(
+        cache, key, settings.cache_ttl_seconds, SegmentTransitionReportResponse, compute
     )
 
 

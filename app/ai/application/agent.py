@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from app.ai.domain.model import (
     AiMetadata,
     CampaignSuggestion,
     CampaignSuggestions,
-    CopyCandidate,
     CopyGeneration,
     GuardrailResult,
     SiteDiagnosis,
@@ -220,8 +220,44 @@ class SuggestCampaigns:
         )
 
 
+_SENSITIVE_TERMS = ("guaranteed", "cure", "medical", "risk-free", "100% effective")
+_PROFANITY = ("damn", "crap")
+_PII_PATTERN = re.compile(
+    r"(\b\d{3}-\d{3,4}-\d{4}\b|[\w.+-]+@[\w-]+\.[\w.-]+)"
+)
+
+
+def run_copy_guardrail(
+    brand_tone: str,
+    campaign_goal: str,
+    product_text: str | None,
+    image_url: str | None,
+) -> GuardrailResult:
+    """카피 입력/맥락에 대한 카테고리별 안전 점검."""
+    checks = ("non_empty_inputs", "prohibited_claims", "pii", "profanity", "media")
+    reasons: list[str] = []
+    text = f"{brand_tone} {campaign_goal} {product_text or ''}"
+    lower = text.lower()
+    if not brand_tone.strip() or not campaign_goal.strip():
+        reasons.append("non_empty_inputs: brand_tone and campaign_goal are required")
+    if any(term in lower for term in _SENSITIVE_TERMS):
+        reasons.append("prohibited_claims: sensitive or absolute claim detected")
+    if _PII_PATTERN.search(text):
+        reasons.append("pii: contact information detected in copy inputs")
+    if any(term in lower for term in _PROFANITY):
+        reasons.append("profanity: inappropriate language detected")
+    if image_url and not image_url.startswith(("http://", "https://")):
+        reasons.append("media: image_url must be http or https when provided")
+    return GuardrailResult(passed=not reasons, checks=checks, reasons=tuple(reasons))
+
+
 class GenerateCopy:
-    def execute(
+    """카피 생성: provider(rule/LLM)로 후보 생성 + 가드레일 + human-review 플래그."""
+
+    def __init__(self, provider) -> None:
+        self._provider = provider
+
+    async def execute(
         self,
         brand_tone: str,
         campaign_goal: str,
@@ -231,51 +267,23 @@ class GenerateCopy:
         count: int,
         generated_at: datetime,
     ) -> CopyGeneration:
-        subject = product_name or "recommended item"
-        context = product_text or "your next purchase"
-        tone = brand_tone.strip().lower()
-        goal = campaign_goal.strip().lower()
-        reasons: list[str] = []
-        checks = ["non_empty_inputs", "no_prohibited_claims", "review_sensitive_media"]
+        from app.ai.adapters.llm import CopyContext
 
-        if not brand_tone.strip() or not campaign_goal.strip():
-            reasons.append("brand_tone and campaign_goal are required")
-        sensitive_terms = ("guaranteed", "cure", "medical", "risk-free")
-        lower_text = f"{brand_tone} {campaign_goal} {product_text or ''}".lower()
-        if any(term in lower_text for term in sensitive_terms):
-            reasons.append("sensitive or absolute claim detected")
-        if image_url and not image_url.startswith(("http://", "https://")):
-            reasons.append("image_url must be http or https when provided")
-
-        templates = (
-            (
-                f"{subject} is ready for you",
-                f"{context}. A {tone} message for shoppers ready to {goal}.",
-                "Shop now",
-            ),
-            (
-                f"Come back for {subject}",
-                f"Complete your {goal} with a clear next step and timely reminder.",
-                "Continue",
-            ),
-            (
-                f"Recommended: {subject}",
-                f"Personalized for your interest in {context}.",
-                "See recommendation",
-            ),
+        guardrail = run_copy_guardrail(brand_tone, campaign_goal, product_text, image_url)
+        candidates = await self._provider.generate_copy(
+            CopyContext(
+                brand_tone=brand_tone,
+                campaign_goal=campaign_goal,
+                product_name=product_name,
+                product_text=product_text,
+                image_url=image_url,
+                count=count,
+            )
         )
-        candidates = tuple(
-            CopyCandidate(headline=h, body=b, call_to_action=cta)
-            for h, b, cta in templates[:count]
-        )
-        passed = not reasons
         return CopyGeneration(
             metadata=metadata(generated_at),
-            guardrail=GuardrailResult(
-                passed=passed,
-                checks=tuple(checks),
-                reasons=tuple(reasons),
-            ),
-            requires_human_review=not passed or image_url is not None,
-            candidates=candidates,
+            guardrail=guardrail,
+            # 가드레일 위반 또는 이미지 동반 생성은 사람 검토 필요.
+            requires_human_review=not guardrail.passed or image_url is not None,
+            candidates=tuple(candidates),
         )

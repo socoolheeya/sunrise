@@ -23,6 +23,16 @@ from app.prediction.domain.model import (
     clamp_score,
     score_band,
 )
+from app.prediction.domain.clv_models import (
+    BgNbdParams,
+    ClvCustomer,
+    GammaGammaParams,
+    bgnbd_expected_purchases,
+    bgnbd_p_alive,
+    fit_bgnbd,
+    fit_gamma_gamma,
+    gamma_gamma_expected_value,
+)
 from app.prediction.domain.repository import PredictionRepository
 
 
@@ -265,8 +275,16 @@ class GetCustomerLifetimeValues:
         horizon_days: int,
     ) -> tuple[ScoreMetadata, list[CustomerLifetimeValue]]:
         features = await self._repository.visitor_features(tenant_id, visitor_ids, start, end)
+        # 확률 모델(BG/NBD + Gamma-Gamma) 모수를 모집단으로 적합. 데이터 부족 시 None.
+        population = await self._repository.population_features(tenant_id, start, end)
+        customers = [
+            c for c in (_clv_customer(f, end) for f in population) if c is not None
+        ]
+        bgnbd = fit_bgnbd(customers)
+        gamma = fit_gamma_gamma(customers)
+
         values = [
-            _clv_from_features(feature, end=end, horizon_days=horizon_days)
+            _clv_for_feature(feature, end=end, horizon_days=horizon_days, bgnbd=bgnbd, gamma=gamma)
             for feature in features
         ]
         values.sort(key=lambda item: item.predicted_clv, reverse=True)
@@ -281,6 +299,69 @@ def _is_cold_start(features: VisitorFeatures) -> bool:
         and features.revenue == 0.0
         and features.last_seen_at is None
         and features.last_purchase_at is None
+    )
+
+
+def _clv_customer(features: VisitorFeatures, end: datetime) -> ClvCustomer | None:
+    """VisitorFeatures → BG/NBD 입력. 구매 이력/첫구매시각 없으면 None."""
+    if features.purchase_count <= 0 or features.first_purchase_at is None:
+        return None
+    first = features.first_purchase_at
+    last = features.last_purchase_at or first
+    T = max(0.0, float(_days_between(end, first)))
+    recency = max(0.0, float((last - first).days)) if last >= first else 0.0
+    monetary = features.revenue / features.purchase_count
+    return ClvCustomer(
+        frequency=float(features.purchase_count - 1),
+        recency=recency,
+        T=T,
+        monetary=monetary,
+        purchases=features.purchase_count,
+    )
+
+
+def _clv_for_feature(
+    features: VisitorFeatures,
+    *,
+    end: datetime,
+    horizon_days: int,
+    bgnbd: BgNbdParams | None,
+    gamma: GammaGammaParams | None,
+) -> CustomerLifetimeValue:
+    """적합된 확률 모델이 있으면 BG/NBD + Gamma-Gamma, 없으면 휴리스틱 fallback."""
+    customer = _clv_customer(features, end)
+    if bgnbd is None or gamma is None or customer is None:
+        return _clv_from_features(features, end=end, horizon_days=horizon_days)
+
+    survival = clamp_score(
+        bgnbd_p_alive(bgnbd, customer.frequency, customer.recency, customer.T)
+    )
+    expected_purchases = round(
+        bgnbd_expected_purchases(
+            bgnbd, customer.frequency, customer.recency, customer.T, float(horizon_days)
+        ),
+        4,
+    )
+    expected_order_value = round(
+        gamma_gamma_expected_value(gamma, customer.purchases, customer.monetary), 2
+    )
+    predicted_clv = round(expected_purchases * expected_order_value, 2)
+    days_since_purchase = _days_between(end, features.last_purchase_at)
+    reasons: list[str] = ["bgnbd_gamma_gamma"]
+    if days_since_purchase <= 30:
+        reasons.append("recent_purchase")
+    elif days_since_purchase >= 90:
+        reasons.append("stale_purchase")
+    if features.purchase_count >= 2:
+        reasons.append("repeat_purchase")
+    return CustomerLifetimeValue(
+        visitor_id=features.visitor_id,
+        survival_probability=survival,
+        expected_purchases=expected_purchases,
+        expected_order_value=expected_order_value,
+        predicted_clv=predicted_clv,
+        band=_clv_band(predicted_clv),
+        reasons=tuple(reasons),
     )
 
 

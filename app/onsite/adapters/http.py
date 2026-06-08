@@ -82,6 +82,7 @@ class OnsiteDecisionResponse(BaseModel):
     frequency_cap_key: str
     frequency_capped: bool = False
     generated_at: datetime
+    experiment_group: str | None = None
 
 
 class OnsiteTrackRequest(BaseModel):
@@ -186,7 +187,7 @@ async def decide_onsite(
         )
         for item in recommended
     )
-    decision = DecideOnsiteCampaign().execute(
+    decision = await DecideOnsiteCampaign().execute(
         OnsiteDecisionContext(
             tenant_id=tenant_id,
             visitor_id=payload.visitor_id,
@@ -221,6 +222,7 @@ async def decide_onsite(
                 frequency_cap_key=decision.frequency_cap_key,
                 frequency_capped=True,
                 generated_at=decision.generated_at,
+                experiment_group=decision.experiment_group,
             )
     return OnsiteDecisionResponse(
         decision_id=decision.decision_id,
@@ -250,6 +252,7 @@ async def decide_onsite(
         frequency_cap_key=decision.frequency_cap_key,
         frequency_capped=False,
         generated_at=decision.generated_at,
+        experiment_group=decision.experiment_group,
     )
 
 

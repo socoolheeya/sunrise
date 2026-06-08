@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     kafka_request_timeout_ms: int = 30_000
     kafka_retry_backoff_ms: int = 100
     kafka_max_batch_size: int = 16_384
+    # Kafka(+DLQ) 전면 장애 시 이벤트를 outbox 에 보존했다가 복구 후 재발행한다.
+    ingestion_outbox_enabled: bool = True
+    ingestion_outbox_max_pending: int = 100_000  # backlog 초과 시 backpressure(503)
+    ingestion_outbox_relay_batch: int = 500
+
+    # AI 카피 생성 provider. rules 는 결정론적 기본, anthropic 은 LLM(키 설정 시).
+    ai_llm_provider: Literal["rules", "anthropic"] = "rules"
+    anthropic_api_key: str | None = None
+    ai_llm_model: str = "claude-opus-4-8"
 
     # 분석 조회 백엔드. sql 은 lite/로컬 모드, clickhouse 는 운영형 OLAP 모드.
     analytics_backend: Literal["sql", "clickhouse"] = "sql"

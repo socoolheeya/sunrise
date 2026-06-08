@@ -248,6 +248,73 @@ class LifecycleSegmentReport:
     segments: tuple[LifecycleSegment, ...]
 
 
+# ---- 세그먼트 이동(transition) 분석 ----
+@dataclass(frozen=True)
+class SegmentTransition:
+    segment_type: str  # "visit" | "purchase"
+    from_segment: str  # 이전 스냅샷 세그먼트 ("absent" = 이전 기간에 없던 신규)
+    to_segment: str  # 현재 스냅샷 세그먼트
+    customer_count: int
+    transition_rate: float  # from_segment 모수 대비 이동 비율
+
+
+@dataclass(frozen=True)
+class SegmentTransitionReport:
+    segment_type: str
+    transitions: tuple[SegmentTransition, ...]
+
+    def top_sources(self, to_segment: str, limit: int = 3) -> tuple[SegmentTransition, ...]:
+        """특정 도착 세그먼트로 유입된 상위 source 세그먼트(이동 인원 기준)."""
+        inbound = [t for t in self.transitions if t.to_segment == to_segment]
+        inbound.sort(key=lambda t: t.customer_count, reverse=True)
+        return tuple(inbound[:limit])
+
+
+def _segment_field(segment: "LifecycleSegment", segment_type: str) -> str:
+    if segment_type == "purchase":
+        return segment.purchase_segment
+    return segment.visit_segment
+
+
+def compute_segment_transitions(
+    previous: list["LifecycleSegment"],
+    current: list["LifecycleSegment"],
+    segment_type: str,
+) -> SegmentTransitionReport:
+    """두 스냅샷을 비교해 고객별 세그먼트 이동을 집계한다.
+
+    - current 스냅샷에 존재하는 고객을 기준으로 집계한다.
+    - 이전 스냅샷에 없던 고객의 from_segment 는 "absent".
+    - transition_rate = (from→to 인원) / (이전 세그먼트가 from 인 현재 고객 총원).
+    """
+    prev_by_customer = {
+        seg.visitor_id: _segment_field(seg, segment_type) for seg in previous
+    }
+    pair_counts: dict[tuple[str, str], int] = {}
+    from_totals: dict[str, int] = {}
+    for seg in current:
+        from_segment = prev_by_customer.get(seg.visitor_id, "absent")
+        to_segment = _segment_field(seg, segment_type)
+        pair_counts[(from_segment, to_segment)] = (
+            pair_counts.get((from_segment, to_segment), 0) + 1
+        )
+        from_totals[from_segment] = from_totals.get(from_segment, 0) + 1
+
+    transitions = tuple(
+        SegmentTransition(
+            segment_type=segment_type,
+            from_segment=from_segment,
+            to_segment=to_segment,
+            customer_count=count,
+            transition_rate=(count / from_totals[from_segment]) if from_totals[from_segment] else 0.0,
+        )
+        for (from_segment, to_segment), count in sorted(
+            pair_counts.items(), key=lambda item: item[1], reverse=True
+        )
+    )
+    return SegmentTransitionReport(segment_type=segment_type, transitions=transitions)
+
+
 def _days_since(reference: datetime, value: datetime | None) -> int:
     if value is None:
         return 365

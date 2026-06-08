@@ -158,7 +158,7 @@ async def test_audience_preview_uses_prediction_score_conditions(client: AsyncCl
                         "type": "score",
                         "name": "purchase_score",
                         "op": "gte",
-                        "value": 0.2,
+                        "value": 0.1,
                     }
                 ]
             },
@@ -168,6 +168,66 @@ async def test_audience_preview_uses_prediction_score_conditions(client: AsyncCl
 
     assert response.status_code == 200
     assert response.json()["sample_visitor_ids"] == ["v-hot"]
+
+
+async def test_audience_preview_respects_event_count_window(client: AsyncClient):
+    """event_count 조건의 window_days 가 실제로 하위 윈도우를 좁히는지 검증."""
+    await client.post(
+        "/v1/collect",
+        json={
+            "events": [
+                {
+                    "event_id": "win-old",
+                    "visitor_id": "v-old",
+                    "type": "cart_add",
+                    "product_id": "p1",
+                    # end(2026-06-10) 기준 40일 전 → 7일 윈도우 밖, 90일 윈도우 안
+                    "occurred_at": "2026-05-01T00:00:00Z",
+                },
+                {
+                    "event_id": "win-new",
+                    "visitor_id": "v-new",
+                    "type": "cart_add",
+                    "product_id": "p1",
+                    "occurred_at": "2026-06-09T00:00:00Z",
+                },
+            ]
+        },
+    )
+    params = {"start": "2026-03-12T00:00:00Z", "end": "2026-06-10T00:00:00Z"}
+
+    short_window = await client.post(
+        "/v1/audiences/preview",
+        params=params,
+        json={
+            "rule": {
+                "all": [
+                    {"type": "event_count", "event": "cart_add", "window_days": 7,
+                     "op": "gte", "value": 1}
+                ]
+            }
+        },
+    )
+    long_window = await client.post(
+        "/v1/audiences/preview",
+        params=params,
+        json={
+            "rule": {
+                "all": [
+                    {"type": "event_count", "event": "cart_add", "window_days": 90,
+                     "op": "gte", "value": 1}
+                ]
+            }
+        },
+    )
+
+    assert short_window.status_code == 200
+    # 7일 윈도우: 최근(v-new)만 매칭, 40일 전 v-old 는 제외
+    assert short_window.json()["matched_count"] == 1
+    assert short_window.json()["sample_visitor_ids"] == ["v-new"]
+    # 90일 윈도우: 둘 다 매칭
+    assert long_window.status_code == 200
+    assert long_window.json()["matched_count"] == 2
 
 
 async def test_audience_template_not_found(client: AsyncClient):

@@ -36,6 +36,9 @@ class SqlPredictionRepository(PredictionRepository):
                 func.max(
                     case((EventRow.type == "purchase", EventRow.occurred_at))
                 ).label("last_purchase_at"),
+                func.min(
+                    case((EventRow.type == "purchase", EventRow.occurred_at))
+                ).label("first_purchase_at"),
             )
             .where(
                 and_(
@@ -56,6 +59,7 @@ class SqlPredictionRepository(PredictionRepository):
                 revenue=float(row.revenue or 0.0),
                 last_seen_at=row.last_seen_at,
                 last_purchase_at=row.last_purchase_at,
+                first_purchase_at=row.first_purchase_at,
             )
             for row in rows.all()
         }
@@ -73,6 +77,52 @@ class SqlPredictionRepository(PredictionRepository):
                 ),
             )
             for visitor_id in visitor_ids
+        ]
+
+    async def population_features(
+        self, tenant_id: str, start: datetime, end: datetime, *, limit: int = 50_000
+    ) -> list[VisitorFeatures]:
+        rows = await self._session.execute(
+            select(
+                EventRow.visitor_id,
+                func.count(case((EventRow.type == "view", 1))).label("view_count"),
+                func.count(case((EventRow.type == "cart_add", 1))).label("cart_add_count"),
+                func.count(case((EventRow.type == "purchase", 1))).label("purchase_count"),
+                func.coalesce(
+                    func.sum(case((EventRow.type == "purchase", EventRow.amount), else_=0.0)),
+                    0.0,
+                ).label("revenue"),
+                func.max(EventRow.occurred_at).label("last_seen_at"),
+                func.max(case((EventRow.type == "purchase", EventRow.occurred_at))).label(
+                    "last_purchase_at"
+                ),
+                func.min(case((EventRow.type == "purchase", EventRow.occurred_at))).label(
+                    "first_purchase_at"
+                ),
+            )
+            .where(
+                and_(
+                    EventRow.tenant_id == tenant_id,
+                    EventRow.occurred_at >= start,
+                    EventRow.occurred_at < end,
+                )
+            )
+            .group_by(EventRow.visitor_id)
+            .having(func.count(case((EventRow.type == "purchase", 1))) > 0)
+            .limit(limit)
+        )
+        return [
+            VisitorFeatures(
+                visitor_id=row.visitor_id,
+                view_count=int(row.view_count or 0),
+                cart_add_count=int(row.cart_add_count or 0),
+                purchase_count=int(row.purchase_count or 0),
+                revenue=float(row.revenue or 0.0),
+                last_seen_at=row.last_seen_at,
+                last_purchase_at=row.last_purchase_at,
+                first_purchase_at=row.first_purchase_at,
+            )
+            for row in rows.all()
         ]
 
     async def product_signals(

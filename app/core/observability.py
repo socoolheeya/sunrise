@@ -16,6 +16,9 @@ class IngestionMetrics:
     publish_failures: int = 0
     dlq_published: int = 0
     dlq_failures: int = 0
+    outbox_enqueued: int = 0
+    outbox_relayed: int = 0
+    outbox_backpressure_rejected: int = 0
 
     def record_result(self, *, accepted: int, duplicates: int) -> None:
         self.accepted_events += accepted
@@ -29,6 +32,15 @@ class IngestionMetrics:
 
     def record_dlq_failure(self) -> None:
         self.dlq_failures += 1
+
+    def record_outbox_enqueued(self) -> None:
+        self.outbox_enqueued += 1
+
+    def record_outbox_relayed(self, count: int = 1) -> None:
+        self.outbox_relayed += count
+
+    def record_outbox_backpressure(self) -> None:
+        self.outbox_backpressure_rejected += 1
 
 
 _ingestion_metrics = IngestionMetrics()

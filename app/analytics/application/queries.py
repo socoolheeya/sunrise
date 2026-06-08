@@ -18,6 +18,8 @@ from app.analytics.domain.model import (
     LifecycleSegment,
     LifecycleSegmentReport,
     RevenueBreakdown,
+    SegmentTransitionReport,
+    compute_segment_transitions,
     purchase_segment,
     visit_segment,
 )
@@ -102,6 +104,102 @@ class GetRevenueBreakdown:
         self, tenant_id: str, start: datetime, end: datetime
     ) -> RevenueBreakdown:
         return await self._repository.revenue_breakdown(tenant_id, start, end)
+
+
+class RefreshOrderFacts:
+    """raw 이벤트를 order_fact 주문 원장으로 머티리얼라이즈하는 배치 유스케이스."""
+
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int = 24,
+    ) -> int:
+        return await self._repository.refresh_order_facts(
+            tenant_id, start, end, attribution_window_hours
+        )
+
+
+class GetOrderRevenueBreakdown:
+    """order_fact 원장 기반 매출 breakdown(주문 단위 중복제거)."""
+
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> RevenueBreakdown:
+        return await self._repository.order_revenue_breakdown(tenant_id, start, end)
+
+
+class RefreshCohortRetention:
+    """기간 이벤트로 cohort_retention read model 을 머티리얼라이즈하는 배치 유스케이스."""
+
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        cohort_type: str,
+        granularity: str,
+        max_offset: int = 11,
+    ) -> int:
+        return await self._repository.refresh_cohort_retention(
+            tenant_id, start, end, cohort_type, granularity, max_offset
+        )
+
+
+class GetCohortRetention:
+    """머티리얼라이즈된 cohort retention 매트릭스 조회."""
+
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self, tenant_id: str, cohort_type: str, granularity: str
+    ) -> CohortReport:
+        return await self._repository.cohort_retention(
+            tenant_id, cohort_type, granularity
+        )
+
+
+class RefreshLifecycleSegments:
+    """기간 집계로 as_of 시점 세그먼트 스냅샷을 머티리얼라이즈하는 배치 유스케이스."""
+
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self, tenant_id: str, start: datetime, end: datetime, as_of: datetime
+    ) -> int:
+        return await self._repository.refresh_lifecycle_segments(
+            tenant_id, start, end, as_of
+        )
+
+
+class GetSegmentTransitions:
+    """두 스냅샷(as_of_from, as_of_to)을 비교해 세그먼트 이동을 산출."""
+
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repository = repository
+
+    async def execute(
+        self,
+        tenant_id: str,
+        as_of_from: datetime,
+        as_of_to: datetime,
+        segment_type: str,
+    ) -> SegmentTransitionReport:
+        previous = await self._repository.segment_snapshot(tenant_id, as_of_from)
+        current = await self._repository.segment_snapshot(tenant_id, as_of_to)
+        return compute_segment_transitions(previous, current, segment_type)
 
 
 class GetLifecycleSegments:

@@ -85,3 +85,8 @@ def _validate(raw: dict[str, Any]) -> RecommendationModelArtifact:
 def load_recommendation_model(path: str | None = None) -> RecommendationModelArtifact:
     """Load and validate a promoted model artifact."""
     return _validate(_read_artifact(path))
+
+
+def validate_recommendation_artifact(raw: dict[str, Any]) -> RecommendationModelArtifact:
+    """DB 레지스트리 raw artifact 검증/파싱(서빙 계약 강제)."""
+    return _validate(raw)

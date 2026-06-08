@@ -97,6 +97,44 @@ FROM sunrise.raw_events_queue
 WHERE schema_version = 'tracking-event.v1'
 GROUP BY tenant_id, period;
 
+-- 주문 단위 사실(order_fact): order_id 기준 ReplacingMergeTree 로 구매 이벤트를
+-- 주문 단위로 중복제거한다. 같은 order_id 의 다중 purchase 이벤트(재시도/분할발송/
+-- 스크립트 중복 발화)는 received_at 최신 1건으로 collapse 되어 매출/주문수 과대
+-- 집계를 방지한다. onsite_matched 는 구매 이벤트의 session 동반 여부.
+-- (attribution 은 touchpoint join 이 필요하므로 serving 시 계산한다.)
+CREATE TABLE IF NOT EXISTS sunrise.order_fact_v2
+(
+    tenant_id LowCardinality(String),
+    order_id String,
+    visitor_id String,
+    amount Float64,
+    status LowCardinality(String),
+    channel LowCardinality(String),
+    onsite_matched Bool,
+    occurred_at DateTime64(3, 'UTC'),
+    received_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(received_at)
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (tenant_id, order_id);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sunrise.raw_events_to_order_fact_v2
+TO sunrise.order_fact_v2 AS
+SELECT
+    tenant_id,
+    order_id,
+    visitor_id,
+    ifNull(amount, 0) AS amount,
+    'completed' AS status,
+    coalesce(utm_medium, utm_source, category, 'unknown') AS channel,
+    session_id IS NOT NULL AS onsite_matched,
+    occurred_at,
+    received_at
+FROM sunrise.raw_events_queue
+WHERE schema_version = 'tracking-event.v1'
+  AND type = 'purchase'
+  AND order_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS sunrise.visitor_features_daily_v2
 (
     tenant_id LowCardinality(String),
@@ -206,3 +244,59 @@ FROM sunrise.raw_events_queue
 WHERE schema_version = 'tracking-event.v1'
   AND coalesce(product_id, category) IS NOT NULL
 GROUP BY tenant_id, visitor_id, product_id, category, key, period;
+
+-- ===========================================================================
+-- 분석 read model (refresh 배치가 적재)
+-- ---------------------------------------------------------------------------
+-- order_fact / segment / cohort 는 attribution·세그먼트 분류·코호트 버킷처럼
+-- 블록 단위 스트리밍 MV 로 표현하기 어려운 로직이 필요하다. 따라서 Python
+-- refresh 유스케이스가 전체 로직으로 산출해 아래 테이블에 delete-then-insert 로
+-- 머티리얼라이즈하고, 조회는 이 테이블만 SELECT 한다(SQL 백엔드와 동일 의미).
+-- ReplacingMergeTree(computed_at) 로 재적재 시 최신본을 채택한다.
+-- (위의 *_v2 스트리밍 MV 는 향후 네이티브 사전집계 최적화용으로 유지.)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS sunrise.order_facts
+(
+    tenant_id LowCardinality(String),
+    order_id String,
+    visitor_id String,
+    amount Float64,
+    status LowCardinality(String),
+    channel LowCardinality(String),
+    onsite_matched Bool,
+    attributed Bool,
+    attributed_channel Nullable(String),
+    occurred_at DateTime64(3, 'UTC'),
+    computed_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(computed_at)
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (tenant_id, order_id);
+
+CREATE TABLE IF NOT EXISTS sunrise.customer_segment_daily
+(
+    tenant_id LowCardinality(String),
+    customer_id String,
+    as_of DateTime64(3, 'UTC'),
+    visit_segment LowCardinality(String),
+    purchase_segment LowCardinality(String),
+    revenue Float64,
+    computed_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(computed_at)
+ORDER BY (tenant_id, customer_id, as_of);
+
+CREATE TABLE IF NOT EXISTS sunrise.cohort_retention
+(
+    tenant_id LowCardinality(String),
+    cohort_type LowCardinality(String),
+    granularity LowCardinality(String),
+    cohort String,
+    offset UInt16,
+    base_count UInt32,
+    retained_count UInt32,
+    retention_rate Float64,
+    computed_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(computed_at)
+ORDER BY (tenant_id, cohort_type, granularity, cohort, offset);

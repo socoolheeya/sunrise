@@ -37,7 +37,29 @@
       "Bash(curl -s -X POST -H 'X-Sunrise-Key: demo-key' -H 'Content-Type: application/json' localhost:8000/v1/recommendations/items -d '{\"visitor_id\":\"visitor-01\",\"placement\":\"onsite\",\"limit\":4,\"out_of_stock\":[\"p-sh1\"]}')",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" -X POST -H \"Content-Type: application/json\" localhost:8000/v1/recommendations/items -d '{\"visitor_id\":\"x\"}')",
       "Bash(curl -s localhost:8000/openapi.json)",
-      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\)['paths']; print\\([k for k in p if 'recommend' in k]\\)\")"
+      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\)['paths']; print\\([k for k in p if 'recommend' in k]\\)\")",
+      "Bash(grep -oE ', \"[a-z]+\",$')",
+      "Bash(awk '/### 4.7|## 4.7|4\\\\.7/{f=1} f{print} /### 4.8|## 4.8/{if\\(f\\)exit}' /Users/wonhee.lee/IdeaProjects/sunrise/docs/prd_python.md)",
+      "Bash(python -m pytest tests/test_recommendation_api.py tests/test_recommendation_training.py -q)",
+      "Bash(python -m pytest tests/test_onsite_api.py -q)",
+      "Bash(python3 -m compileall -q app tests)",
+      "Bash(echo \"COMPILE_EXIT=$?\")",
+      "Bash(python3 -m pytest -q)",
+      "Bash(python3 -m compileall -q app)",
+      "Bash(python3 -m pytest -q tests/test_audience_api.py tests/test_clickhouse_analytics.py tests/test_analytics_extra.py)",
+      "Bash(python3 -m compileall -q app tests migrations)",
+      "Bash(python3 -m pytest -q tests/test_order_fact.py tests/test_clickhouse_analytics.py)",
+      "Bash(python3 -)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(python3 -c \"import json;d=json.load\\(open\\('app/prediction/models/prediction_model.json'\\)\\);print\\('metrics keys:',list\\(d['metrics'].keys\\(\\)\\)\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python3 -m compileall -q app/analytics/adapters/clickhouse.py)",
+      "Bash(python3 -m pytest -q tests/test_clickhouse_analytics.py)",
+      "Bash(python3 -m app.prediction.training.baseline)",
+      "Bash(python3 -m app.prediction.training.train_model)",
+      "Bash(python3 -c \"import json;d=json.load\\(open\\('app/prediction/models/prediction_model.json'\\)\\);print\\('version',d['model_version']\\);print\\('training_data',d['training_data']\\);print\\('drift_baseline keys',sorted\\(d['drift_baseline']\\)\\);print\\('backtest',{k:d['backtest'][k] for k in \\('holdout_size','purchase_auc','churn_auc','affinity_auc'\\)}\\);print\\('metrics',d['metrics']\\)\")",
+      "Bash(python3 -m app.prediction.training.train_model --check)",
+      "Bash(python3 -m pytest -q tests/test_kafka_ingestion.py)"
     ]
   }
 }

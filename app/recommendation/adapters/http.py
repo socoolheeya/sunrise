@@ -11,10 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.core.config import Settings, get_settings
+from app.core.model_registry import ModelRegistryStore, parse_cached
 from app.core.tenant import require_tenant
 from app.events.registry import RECOMMENDATION_RESPONSE_SCHEMA_VERSION
 from app.recommendation.adapters.clickhouse import ClickHouseRecommendationRepository
-from app.recommendation.adapters.model_registry import load_recommendation_model
+from app.recommendation.adapters.model_registry import (
+    load_recommendation_model,
+    validate_recommendation_artifact,
+)
 from app.recommendation.adapters.repository import SqlRecommendationRepository
 from app.recommendation.application.recommend import RecommendItems
 from app.recommendation.domain.model import (
@@ -104,9 +108,17 @@ def get_recommendation_repo(
     return SqlRecommendationRepository(session)
 
 
-def get_recommendation_model(
+async def get_recommendation_model(
+    tenant_id: str = Depends(require_tenant),
+    session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> RecommendationModelArtifact:
+    active = await ModelRegistryStore(session).active(tenant_id, "recommendation")
+    if active is not None:
+        return parse_cached(
+            "recommendation", active.version, active.artifact,
+            validate_recommendation_artifact,
+        )
     return load_recommendation_model(settings.recommendation_model_path)
 
 

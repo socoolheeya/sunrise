@@ -20,13 +20,14 @@ def _isolated_env(tmp_path, monkeypatch):
         '{"test-key": "tenant-a", "other-key": "tenant-b"}',
     )
 
-    from app.core import cache, config, database, observability, rate_limit
+    from app.core import cache, config, database, model_registry, observability, rate_limit
 
     config._settings = None
     database.reset_state()
     cache.reset_state()
     observability.reset_state()
     rate_limit.reset_state()
+    model_registry.reset_parsed_cache()
     yield
     config._settings = None
     database.reset_state()

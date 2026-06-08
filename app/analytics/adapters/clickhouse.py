@@ -8,16 +8,31 @@ clickhouse-connect 는 ClickHouse 모드에서만 lazy import 하므로 로컬 S
 from __future__ import annotations
 
 import inspect
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.analytics.domain.cohort import build_cohort_rows, cohort_event_types
 from app.analytics.domain.model import (
     AttributionChannel,
+    CohortCell,
+    CohortReport,
+    CohortRow,
     DataTalkSnapshot,
     InflowChannel,
+    LifecycleSegment,
     MetricInputs,
     RevenueBreakdown,
     VisitorLifecycleInput,
+    purchase_segment,
+    visit_segment,
+)
+from app.analytics.domain.order_fact import (
+    OrderEvent,
+    OrderFact,
+    fold_order_facts,
+    revenue_breakdown_from_facts,
 )
 from app.analytics.domain.repository import AnalyticsRepository
 
@@ -25,9 +40,57 @@ from app.analytics.domain.repository import AnalyticsRepository
 class ClickHouseClient(Protocol):
     def query(self, sql: str, parameters: dict[str, Any] | None = None) -> Any: ...
 
+    def command(self, sql: str, parameters: dict[str, Any] | None = None) -> Any: ...
+
+    def insert(
+        self, table: str, data: list[list[Any]], column_names: list[str]
+    ) -> Any: ...
+
 
 class ClickHouseQueryError(RuntimeError):
     """Raised when the ClickHouse backend is unavailable or rejects a query."""
+
+
+# read-model 테이블 컬럼 계약 (refresh insert 시 사용)
+_ORDER_FACT_COLUMNS = [
+    "tenant_id", "order_id", "visitor_id", "amount", "status", "channel",
+    "onsite_matched", "attributed", "attributed_channel", "occurred_at", "computed_at",
+]
+_SEGMENT_COLUMNS = [
+    "tenant_id", "customer_id", "as_of", "visit_segment", "purchase_segment",
+    "revenue", "computed_at",
+]
+_COHORT_COLUMNS = [
+    "tenant_id", "cohort_type", "granularity", "cohort", "offset",
+    "base_count", "retained_count", "retention_rate", "computed_at",
+]
+
+
+async def _command(
+    client: ClickHouseClient, sql: str, parameters: dict[str, Any]
+) -> None:
+    try:
+        result = client.command(sql, parameters=parameters)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        raise ClickHouseQueryError("ClickHouse command failed") from exc
+
+
+async def _insert(
+    client: ClickHouseClient,
+    table: str,
+    rows: list[list[Any]],
+    column_names: list[str],
+) -> None:
+    if not rows:
+        return
+    try:
+        result = client.insert(table, rows, column_names=column_names)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        raise ClickHouseQueryError("ClickHouse insert failed") from exc
 
 
 async def _query_rows(
@@ -61,10 +124,22 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
         client: ClickHouseClient,
         events_table: str,
         metric_daily_table: str | None = None,
+        snapshot_session: AsyncSession | None = None,
     ) -> None:
         self._client = client
         self._events_table = events_table
         self._metric_daily_table = metric_daily_table
+        # read-model 테이블은 events_table 과 동일 DB 스키마에 둔다.
+        # (예: events_table="sunrise.events" → "sunrise.order_facts")
+        prefix = events_table.rsplit(".", 1)[0] + "." if "." in events_table else ""
+        self._order_facts_table = f"{prefix}order_facts"
+        self._segment_table = f"{prefix}customer_segment_daily"
+        self._cohort_table = f"{prefix}cohort_retention"
+        # DataTalk snapshot 은 저용량 frozen 리포트 문서다. OLAP(ClickHouse)는
+        # 분석 조회용이고, snapshot 은 관계형 저장소(migration 0005 의
+        # datatalk_snapshots 테이블)에 영속화한다. ClickHouse 모드에서도 동일
+        # 관계형 세션을 주입받아 SQL 저장소로 위임한다.
+        self._snapshot_session = snapshot_session
 
     @property
     def _events_relation(self) -> str:
@@ -107,6 +182,13 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
     async def _metric_inputs_from_daily(
         self, tenant_filter: str, params: dict[str, Any]
     ) -> MetricInputs:
+        # 주의: agg_metric_daily_v2 는 purchase_count/revenue 를 '구매 이벤트'
+        # 단위로 집계한다(countIf/sumIf). PRD §4.1/§4.2 는 order_id 기준 '주문
+        # 단위' 중복제거를 강제하므로, 한 주문이 여러 purchase 이벤트를 내면 이
+        # 사전집계 경로는 매출/주문수를 과대 집계한다. 따라서 tenant metrics 는
+        # 항상 _metric_inputs(raw-scan, 주문 dedup) 를 사용하고 이 메서드는
+        # 호출하지 않는다. 주문 단위 사전집계가 필요하면 order_fact read model
+        # (architecture §6.7) 를 먼저 도입해야 한다.
         rows = await _query_rows(
             self._client,
             f"""
@@ -469,7 +551,298 @@ class ClickHouseAnalyticsRepository(AnalyticsRepository):
         end: datetime,
         snapshot: DataTalkSnapshot,
     ) -> None:
-        _ = (tenant_id, start, end, snapshot)
+        if self._snapshot_session is None:
+            raise ClickHouseQueryError(
+                "DataTalk snapshot persistence requires a relational session; "
+                "ClickHouse analytics backend was constructed without one."
+            )
+        # 순환 import 방지를 위해 지연 import.
+        from app.analytics.adapters.repository import SqlAnalyticsRepository
+
+        await SqlAnalyticsRepository(self._snapshot_session).save_datatalk_snapshot(
+            tenant_id, start, end, snapshot
+        )
+
+    async def _order_facts(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ):
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT
+                visitor_id,
+                order_id,
+                type,
+                amount,
+                occurred_at,
+                session_id,
+                utm_medium,
+                utm_source,
+                category
+            FROM {self._events_relation}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND occurred_at >= {{start:DateTime}}
+              AND occurred_at < {{end:DateTime}}
+            """,
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        events = [
+            OrderEvent(
+                visitor_id=str(row["visitor_id"]),
+                order_id=row.get("order_id"),
+                type=str(row["type"]),
+                amount=float(row.get("amount") or 0.0),
+                occurred_at=row["occurred_at"],
+                session_id=row.get("session_id"),
+                utm_medium=row.get("utm_medium"),
+                utm_source=row.get("utm_source"),
+                category=row.get("category"),
+            )
+            for row in rows
+        ]
+        return fold_order_facts(
+            tenant_id, events, attribution_window_hours=attribution_window_hours
+        )
+
+    async def refresh_order_facts(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ) -> int:
+        # raw events 를 fold 해 order_facts read-model 테이블에 머티리얼라이즈한다
+        # (delete-then-insert). 조회(order_revenue_breakdown)는 이 테이블만 읽는다.
+        facts = await self._order_facts(tenant_id, start, end, attribution_window_hours)
+        computed_at = datetime.now(tz=timezone.utc)
+        await _command(
+            self._client,
+            f"ALTER TABLE {self._order_facts_table} DELETE "
+            "WHERE tenant_id = {tenant_id:String} "
+            "AND occurred_at >= {start:DateTime} AND occurred_at < {end:DateTime}",
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        rows = [
+            [
+                f.tenant_id, f.order_id, f.visitor_id, f.amount, f.status, f.channel,
+                f.onsite_matched, f.attributed, f.attributed_channel,
+                f.occurred_at, computed_at,
+            ]
+            for f in facts
+        ]
+        await _insert(self._client, self._order_facts_table, rows, _ORDER_FACT_COLUMNS)
+        return len(facts)
+
+    async def order_revenue_breakdown(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> RevenueBreakdown:
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT
+                order_id,
+                argMax(amount, computed_at) AS amount,
+                argMax(status, computed_at) AS status,
+                argMax(onsite_matched, computed_at) AS onsite_matched,
+                argMax(attributed, computed_at) AS attributed
+            FROM {self._order_facts_table}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND occurred_at >= {{start:DateTime}}
+              AND occurred_at < {{end:DateTime}}
+            GROUP BY order_id
+            """,
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        facts = [
+            OrderFact(
+                tenant_id=tenant_id,
+                order_id=str(row.get("order_id")),
+                visitor_id="",
+                amount=float(row.get("amount") or 0.0),
+                status=str(row.get("status") or "completed"),
+                channel="",
+                onsite_matched=bool(row.get("onsite_matched")),
+                attributed=bool(row.get("attributed")),
+                attributed_channel=None,
+                occurred_at=end,
+            )
+            for row in rows
+        ]
+        total, onsite, attributed = revenue_breakdown_from_facts(facts)
+        return RevenueBreakdown(
+            total_revenue=total,
+            onsite_revenue=onsite,
+            attributed_revenue=attributed,
+        )
+
+    def _classify(
+        self, inputs: list[VisitorLifecycleInput], as_of: datetime
+    ) -> list[LifecycleSegment]:
+        return [
+            LifecycleSegment(
+                visitor_id=item.visitor_id,
+                visit_segment=visit_segment(as_of, item.last_seen_at),
+                purchase_segment=purchase_segment(
+                    as_of, item.purchase_count, item.last_purchase_at
+                ),
+                revenue=item.revenue,
+            )
+            for item in inputs
+        ]
+
+    async def refresh_lifecycle_segments(
+        self, tenant_id: str, start: datetime, end: datetime, as_of: datetime
+    ) -> int:
+        # 기간 집계로 as_of 시점 세그먼트를 분류해 customer_segment_daily 에
+        # 머티리얼라이즈한다(delete-then-insert). 조회는 이 테이블만 읽는다.
+        inputs = await self.lifecycle_inputs(tenant_id, start, end)
+        segments = self._classify(inputs, as_of)
+        computed_at = datetime.now(tz=timezone.utc)
+        await _command(
+            self._client,
+            f"ALTER TABLE {self._segment_table} DELETE "
+            "WHERE tenant_id = {tenant_id:String} AND as_of = {as_of:DateTime}",
+            {"tenant_id": tenant_id, "as_of": as_of},
+        )
+        rows = [
+            [
+                tenant_id, s.visitor_id, as_of, s.visit_segment,
+                s.purchase_segment, s.revenue, computed_at,
+            ]
+            for s in segments
+        ]
+        await _insert(self._client, self._segment_table, rows, _SEGMENT_COLUMNS)
+        return len(segments)
+
+    async def segment_snapshot(
+        self, tenant_id: str, as_of: datetime
+    ) -> list[LifecycleSegment]:
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT
+                customer_id,
+                argMax(visit_segment, computed_at) AS visit_segment,
+                argMax(purchase_segment, computed_at) AS purchase_segment,
+                argMax(revenue, computed_at) AS revenue
+            FROM {self._segment_table}
+            WHERE tenant_id = {{tenant_id:String}} AND as_of = {{as_of:DateTime}}
+            GROUP BY customer_id
+            """,
+            {"tenant_id": tenant_id, "as_of": as_of},
+        )
+        return [
+            LifecycleSegment(
+                visitor_id=str(row["customer_id"]),
+                visit_segment=str(row["visit_segment"]),
+                purchase_segment=str(row["purchase_segment"]),
+                revenue=float(row.get("revenue") or 0.0),
+            )
+            for row in rows
+        ]
+
+    async def _cohort_event_times(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        cohort_type: str,
+    ) -> list[tuple[str, datetime]]:
+        types = cohort_event_types(cohort_type)
+        type_list = ", ".join(f"'{t}'" for t in types)
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT visitor_id, occurred_at
+            FROM {self._events_relation}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND occurred_at >= {{start:DateTime}}
+              AND occurred_at < {{end:DateTime}}
+              AND type IN ({type_list})
+            """,
+            {"tenant_id": tenant_id, "start": start, "end": end},
+        )
+        return [(str(row["visitor_id"]), row["occurred_at"]) for row in rows]
+
+    async def refresh_cohort_retention(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        cohort_type: str,
+        granularity: str,
+        max_offset: int,
+    ) -> int:
+        # 이벤트로 코호트 셀을 산출해 cohort_retention 테이블에 머티리얼라이즈한다
+        # (delete-then-insert). 조회는 이 테이블만 읽는다.
+        records = await self._cohort_event_times(tenant_id, start, end, cohort_type)
+        cohort_rows = build_cohort_rows(
+            records, granularity=granularity, max_offset=max_offset
+        )
+        computed_at = datetime.now(tz=timezone.utc)
+        await _command(
+            self._client,
+            f"ALTER TABLE {self._cohort_table} DELETE "
+            "WHERE tenant_id = {tenant_id:String} "
+            "AND cohort_type = {cohort_type:String} "
+            "AND granularity = {granularity:String}",
+            {"tenant_id": tenant_id, "cohort_type": cohort_type, "granularity": granularity},
+        )
+        rows: list[list[Any]] = []
+        for cohort_row in cohort_rows:
+            for cell in cohort_row.cells:
+                rows.append([
+                    tenant_id, cohort_type, granularity, cohort_row.cohort,
+                    cell.offset, cohort_row.size, cell.active, cell.rate, computed_at,
+                ])
+        await _insert(self._client, self._cohort_table, rows, _COHORT_COLUMNS)
+        return len(rows)
+
+    async def cohort_retention(
+        self, tenant_id: str, cohort_type: str, granularity: str
+    ) -> CohortReport:
+        rows = await _query_rows(
+            self._client,
+            f"""
+            SELECT
+                cohort,
+                offset,
+                argMax(base_count, computed_at) AS base_count,
+                argMax(retained_count, computed_at) AS retained_count,
+                argMax(retention_rate, computed_at) AS retention_rate
+            FROM {self._cohort_table}
+            WHERE tenant_id = {{tenant_id:String}}
+              AND cohort_type = {{cohort_type:String}}
+              AND granularity = {{granularity:String}}
+            GROUP BY cohort, offset
+            ORDER BY cohort, offset
+            """,
+            {"tenant_id": tenant_id, "cohort_type": cohort_type, "granularity": granularity},
+        )
+        by_cohort: dict[str, tuple[int, list[CohortCell]]] = {}
+        for row in rows:
+            cohort = str(row["cohort"])
+            base, cells = by_cohort.setdefault(cohort, (int(row["base_count"] or 0), []))
+            cells.append(
+                CohortCell(
+                    offset=int(row["offset"] or 0),
+                    active=int(row["retained_count"] or 0),
+                    rate=float(row["retention_rate"] or 0.0),
+                )
+            )
+        report_rows = tuple(
+            CohortRow(
+                cohort=cohort,
+                size=size,
+                cells=tuple(sorted(cells, key=lambda c: c.offset)),
+            )
+            for cohort, (size, cells) in by_cohort.items()
+        )
+        return CohortReport(rows=report_rows)
 
 
 def create_clickhouse_client(dsn: str) -> ClickHouseClient:

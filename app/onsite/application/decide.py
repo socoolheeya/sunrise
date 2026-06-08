@@ -4,87 +4,105 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from app.onsite.adapters.campaign import (
+    AllowAllAudienceMembership,
+    DefaultCampaignProvider,
+)
+from app.onsite.domain.campaign import (
+    AudienceMembership,
+    CampaignProvider,
+    assign_experiment_group,
+)
 from app.onsite.domain.model import (
-    OnsiteCreative,
     OnsiteDecision,
     OnsiteDecisionContext,
     OnsiteEventType,
-    OnsitePlacement,
     OnsiteRecommendationItem,
 )
 
 
-def _priority(trigger: str) -> str:
-    return {
-        "cart_recovery": "high",
-        "exit_intent": "high",
-        "browse_assist": "medium",
-    }.get(trigger, "low")
-
-
-def _campaign_id(trigger: str) -> str:
-    return f"onsite-{trigger}-v1"
-
-
-def _creative(
-    trigger: str,
-    context: OnsiteDecisionContext,
-    items: tuple[OnsiteRecommendationItem, ...],
-) -> OnsiteCreative:
-    subject = items[0].product_id if items else context.product_id or "recommended item"
-    if trigger == "cart_recovery":
-        return OnsiteCreative(
-            headline="장바구니 상품을 이어서 확인해보세요",
-            body="방금 담은 상품과 함께 구매하기 좋은 추천을 준비했습니다.",
-            call_to_action="장바구니로 돌아가기",
-        )
-    if trigger == "exit_intent":
-        return OnsiteCreative(
-            headline="나가기 전에 맞춤 추천을 확인해보세요",
-            body=f"{subject} 중심으로 지금 관심사에 맞는 상품을 골랐습니다.",
-            call_to_action="추천 보기",
-        )
-    return OnsiteCreative(
-        headline="보고 계신 상품과 어울리는 추천",
-        body=f"{subject}와 함께 많이 비교되는 상품을 확인해보세요.",
-        call_to_action="추천 보기",
-    )
-
-
 class DecideOnsiteCampaign:
-    """Pick the best onsite campaign trigger for the current visitor moment."""
+    """현재 방문자 맥락에 맞는 온사이트 캠페인을 결정한다.
 
-    def execute(
+    활성 캠페인/대상자/실험군은 포트(CampaignProvider/AudienceMembership)에서
+    가져온다. 기본 어댑터는 현 규칙 동작을 유지(fallback)하며, 운영에서는 Kotlin
+    campaign 서비스 어댑터로 교체한다.
+    """
+
+    def __init__(
+        self,
+        campaign_provider: CampaignProvider | None = None,
+        membership: AudienceMembership | None = None,
+    ) -> None:
+        self._campaigns = campaign_provider or DefaultCampaignProvider()
+        self._membership = membership or AllowAllAudienceMembership()
+
+    def _ineligible(
+        self, context: OnsiteDecisionContext, trigger: str | None, *,
+        campaign_id: str | None = None, experiment_group: str | None = None,
+    ) -> OnsiteDecision:
+        suffix = trigger or "none"
+        return OnsiteDecision(
+            decision_id=str(uuid4()),
+            campaign_id=campaign_id,
+            eligible=False,
+            trigger=trigger,
+            placement=context.placement,
+            priority=None,
+            creative=None,
+            items=(),
+            frequency_cap_key=f"{context.tenant_id}:{context.visitor_id}:{suffix}",
+            generated_at=context.now,
+            experiment_group=experiment_group,
+        )
+
+    async def execute(
         self,
         context: OnsiteDecisionContext,
         recommendations: tuple[OnsiteRecommendationItem, ...],
     ) -> OnsiteDecision:
         trigger = self._trigger(context)
         if trigger is None:
-            return OnsiteDecision(
-                decision_id=str(uuid4()),
-                campaign_id=None,
-                eligible=False,
-                trigger=None,
-                placement=context.placement,
-                priority=None,
-                creative=None,
-                items=(),
-                frequency_cap_key=f"{context.tenant_id}:{context.visitor_id}:none",
-                generated_at=context.now,
+            return self._ineligible(context, None)
+
+        subject = (
+            recommendations[0].product_id
+            if recommendations
+            else context.product_id or "recommended item"
+        )
+        campaign = self._campaigns.active_campaign(context.tenant_id, trigger, subject)
+        if campaign is None:  # 활성 캠페인 없음 → 노출 안 함
+            return self._ineligible(context, trigger)
+
+        # 대상자(audience membership) 검증
+        if not await self._membership.is_member(
+            context.tenant_id, context.visitor_id, campaign.campaign_id
+        ):
+            return self._ineligible(context, trigger, campaign_id=campaign.campaign_id)
+
+        # 실험군 배정: holdout 은 노출하지 않되 측정을 위해 기록.
+        experiment_group = assign_experiment_group(
+            context.tenant_id, context.visitor_id, campaign.campaign_id,
+            campaign.holdout_ratio,
+        )
+        if experiment_group == "holdout":
+            return self._ineligible(
+                context, trigger,
+                campaign_id=campaign.campaign_id, experiment_group=experiment_group,
             )
 
         return OnsiteDecision(
             decision_id=str(uuid4()),
-            campaign_id=_campaign_id(trigger),
+            campaign_id=campaign.campaign_id,
             eligible=True,
             trigger=trigger,
             placement=context.placement,
-            priority=_priority(trigger),
-            creative=_creative(trigger, context, recommendations),
+            priority=campaign.priority,
+            creative=campaign.creative,
             items=recommendations,
             frequency_cap_key=f"{context.tenant_id}:{context.visitor_id}:{trigger}",
             generated_at=context.now,
+            experiment_group=experiment_group,
         )
 
     @staticmethod

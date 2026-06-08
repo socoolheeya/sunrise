@@ -158,3 +158,67 @@ async def test_copy_generation_flags_sensitive_claims(client: AsyncClient):
     assert body["guardrail"]["passed"] is False
     assert body["requires_human_review"] is True
     assert body["guardrail"]["reasons"]
+    assert any(r.startswith("prohibited_claims:") for r in body["guardrail"]["reasons"])
+
+
+async def test_copy_review_workflow_enqueue_and_decide(client: AsyncClient):
+    # human review 가 필요한 카피(이미지 동반) → 검토 큐 적재
+    copy = await client.post(
+        "/v1/ai/copy",
+        json={
+            "brand_tone": "friendly",
+            "campaign_goal": "recover carts",
+            "product_name": "Linen Shirt",
+            "image_url": "https://example.com/s.jpg",
+            "count": 1,
+        },
+    )
+    review_id = copy.json()["review_id"]
+    assert review_id is not None
+
+    pending = await client.get("/v1/ai/reviews", params={"status": "pending"})
+    ids = [r["id"] for r in pending.json()["reviews"]]
+    assert review_id in ids
+
+    # 승인 전이
+    decided = await client.post(
+        f"/v1/ai/reviews/{review_id}/decision",
+        json={"decision": "approved", "reviewer": "ops@shop", "note": "ok"},
+    )
+    assert decided.status_code == 200
+    assert decided.json()["status"] == "approved"
+    assert decided.json()["reviewer"] == "ops@shop"
+
+    # 더 이상 pending 아님
+    pending_after = await client.get("/v1/ai/reviews", params={"status": "pending"})
+    assert review_id not in [r["id"] for r in pending_after.json()["reviews"]]
+
+    # 이미 결정된 건 재결정 불가(404)
+    again = await client.post(
+        f"/v1/ai/reviews/{review_id}/decision", json={"decision": "rejected"}
+    )
+    assert again.status_code == 404
+
+
+async def test_clean_copy_does_not_enqueue_review(client: AsyncClient):
+    response = await client.post(
+        "/v1/ai/copy",
+        json={"brand_tone": "friendly", "campaign_goal": "welcome new shoppers",
+              "product_name": "Mug", "count": 1},
+    )
+    body = response.json()
+    assert body["requires_human_review"] is False
+    assert body["review_id"] is None
+
+
+async def test_review_decision_validation_and_isolation(client: AsyncClient):
+    # 존재하지 않는 review → 404
+    missing = await client.post(
+        "/v1/ai/reviews/999999/decision", json={"decision": "approved"}
+    )
+    assert missing.status_code == 404
+    # 잘못된 decision 값 → 422 (pydantic Literal)
+    bad = await client.post(
+        "/v1/ai/reviews/1/decision", json={"decision": "maybe"}
+    )
+    assert bad.status_code == 422

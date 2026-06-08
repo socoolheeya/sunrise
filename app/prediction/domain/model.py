@@ -19,6 +19,7 @@ class VisitorFeatures:
     revenue: float
     last_seen_at: datetime | None
     last_purchase_at: datetime | None
+    first_purchase_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class PredictionModelArtifact:
     metrics: dict[str, float]
     training_data: dict[str, str | int | float]
     drift_baseline: dict[str, float]
+    backtest: dict[str, str | int | float]
 
 
 @dataclass(frozen=True)

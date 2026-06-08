@@ -282,17 +282,16 @@ async def test_collect_kafka_sink_requires_ready_producer(monkeypatch, tmp_path)
     assert response.json()["detail"] == "Kafka producer is not ready"
 
 
-async def test_collect_kafka_publish_failure_returns_503(monkeypatch, tmp_path):
+async def _kafka_app(monkeypatch, tmp_path, **extra_env):
     monkeypatch.setenv(
         "SUNRISE_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
     )
-    monkeypatch.setenv(
-        "SUNRISE_API_KEYS",
-        '{"test-key": "tenant-a"}',
-    )
+    monkeypatch.setenv("SUNRISE_API_KEYS", '{"test-key": "tenant-a"}')
     monkeypatch.setenv("SUNRISE_INGESTION_SINK", "kafka")
     monkeypatch.setenv("SUNRISE_KAFKA_RAW_EVENTS_TOPIC", "raw.events.test")
     monkeypatch.setenv("SUNRISE_KAFKA_DLQ_TOPIC", "raw.events.dlq.test")
+    for key, value in extra_env.items():
+        monkeypatch.setenv(key, value)
 
     from app.core import cache, config, database, observability
     from app.core.database import init_models
@@ -303,15 +302,74 @@ async def test_collect_kafka_publish_failure_returns_503(monkeypatch, tmp_path):
     cache.reset_state()
     observability.reset_state()
     await init_models()
+    return create_app()
 
-    app = create_app()
-    fake = FailingProducer(fail_topics={"raw.events.test"})
-    app.state.kafka_producer = fake
+
+async def test_collect_kafka_publish_failure_spools_to_outbox(monkeypatch, tmp_path):
+    """Kafka(+DLQ) 발행 실패 시 outbox 에 보존하고 202 로 ack(at-least-once, 유실 방지)."""
+    from app.core import observability
+
+    app = await _kafka_app(monkeypatch, tmp_path)
+    app.state.kafka_producer = FailingProducer(fail_topics={"raw.events.test"})
 
     transport = ASGITransport(app=app)
     async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
+        transport=transport, base_url="http://test",
+        headers={"X-Sunrise-Key": "test-key"},
+    ) as client:
+        response = await client.post(
+            "/v1/collect",
+            json={"events": [{"event_id": "e1", "visitor_id": "v1", "type": "view"}]},
+        )
+        status_resp = await client.get("/v1/ingestion/outbox/status")
+
+    metrics = observability.get_ingestion_metrics()
+    assert response.status_code == 202  # 유실 아님: 내구성 spool 후 ack
+    assert response.json()["accepted"] == 1
+    assert metrics.publish_failures == 1
+    assert metrics.dlq_published == 1
+    assert metrics.outbox_enqueued == 1
+    assert status_resp.json()["pending"] == 1
+
+
+async def test_outbox_relay_republishes_after_recovery(monkeypatch, tmp_path):
+    """복구 후 relay 가 보존 이벤트를 재발행하고 outbox 를 비운다."""
+    app = await _kafka_app(monkeypatch, tmp_path)
+    app.state.kafka_producer = FailingProducer(fail_topics={"raw.events.test"})
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport, base_url="http://test",
+        headers={"X-Sunrise-Key": "test-key"},
+    ) as client:
+        await client.post(
+            "/v1/collect",
+            json={"events": [{"event_id": "e1", "visitor_id": "v1", "type": "view"}]},
+        )
+        # Kafka 복구
+        healthy = FakeProducer()
+        app.state.kafka_producer = healthy
+        relay = await client.post("/v1/ingestion/outbox/relay")
+        status_after = await client.get("/v1/ingestion/outbox/status")
+
+    assert relay.json() == {"relayed": 1, "pending": 0}
+    assert status_after.json()["pending"] == 0
+    assert healthy.messages[0]["topic"] == "raw.events.test"
+    assert json.loads(healthy.messages[0]["value"])["event_id"] == "e1"
+
+
+async def test_collect_outbox_backpressure_returns_503(monkeypatch, tmp_path):
+    """outbox backlog 상한 초과 시 load shedding(503)으로 폭주를 막는다."""
+    from app.core import observability
+
+    app = await _kafka_app(
+        monkeypatch, tmp_path, SUNRISE_INGESTION_OUTBOX_MAX_PENDING="0"
+    )
+    app.state.kafka_producer = FailingProducer(fail_topics={"raw.events.test"})
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport, base_url="http://test",
         headers={"X-Sunrise-Key": "test-key"},
     ) as client:
         response = await client.post(
@@ -321,7 +379,44 @@ async def test_collect_kafka_publish_failure_returns_503(monkeypatch, tmp_path):
 
     metrics = observability.get_ingestion_metrics()
     assert response.status_code == 503
+    assert metrics.outbox_backpressure_rejected == 1
+    assert metrics.outbox_enqueued == 0
+
+
+async def test_outbox_enqueue_is_idempotent(monkeypatch, tmp_path):
+    """동일 event_id 재전송이 outbox 를 중복 적재하지 않는다((tenant,event_id) 유니크)."""
+    app = await _kafka_app(monkeypatch, tmp_path)
+    app.state.kafka_producer = FailingProducer(fail_topics={"raw.events.test"})
+
+    transport = ASGITransport(app=app)
+    body = {"events": [{"event_id": "e1", "visitor_id": "v1", "type": "view"}]}
+    async with AsyncClient(
+        transport=transport, base_url="http://test",
+        headers={"X-Sunrise-Key": "test-key"},
+    ) as client:
+        await client.post("/v1/collect", json=body)
+        await client.post("/v1/collect", json=body)  # 동일 event_id 재전송
+        status_resp = await client.get("/v1/ingestion/outbox/status")
+
+    assert status_resp.json()["pending"] == 1
+
+
+async def test_collect_outbox_disabled_returns_503(monkeypatch, tmp_path):
+    """outbox 비활성 시 기존 동작(발행 실패 → 503) 유지."""
+    app = await _kafka_app(
+        monkeypatch, tmp_path, SUNRISE_INGESTION_OUTBOX_ENABLED="false"
+    )
+    app.state.kafka_producer = FailingProducer(fail_topics={"raw.events.test"})
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport, base_url="http://test",
+        headers={"X-Sunrise-Key": "test-key"},
+    ) as client:
+        response = await client.post(
+            "/v1/collect",
+            json={"events": [{"event_id": "e1", "visitor_id": "v1", "type": "view"}]},
+        )
+
+    assert response.status_code == 503
     assert response.json()["detail"] == "failed to publish event batch"
-    assert metrics.publish_failures == 1
-    assert metrics.dlq_published == 1
-    assert fake.messages[0]["topic"] == "raw.events.dlq.test"

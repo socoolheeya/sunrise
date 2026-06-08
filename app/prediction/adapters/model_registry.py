@@ -86,6 +86,28 @@ def _validate(raw: dict[str, Any]) -> PredictionModelArtifact:
         if float(metrics.get(metric, 0.0)) < 0.5:
             raise ValueError(f"prediction model {metric} must be at least 0.5")
 
+    # training_data 는 학습 코드(build_artifact)의 출력 스키마와 일치해야 한다.
+    # 손으로 채운(hand-filled) 메타데이터를 거부해 "서빙 == 학습 산출물" 을 강제한다.
+    training_data = raw.get("training_data") or {}
+    required_training_keys = {
+        "source", "sample_count",
+        "purchase_positive_rate", "churn_positive_rate", "affinity_positive_rate",
+    }
+    missing_training = required_training_keys - set(training_data)
+    if missing_training:
+        raise ValueError(
+            "prediction training_data does not match the trainer output schema "
+            f"(hand-filled artifact?); missing keys: {sorted(missing_training)}"
+        )
+
+    # drift_baseline 은 학습이 산출한 visitor feature 분포여야 한다.
+    drift = raw.get("drift_baseline") or {}
+    missing_drift = [name for name in VISITOR_FEATURE_NAMES if name not in drift]
+    if missing_drift:
+        raise ValueError(
+            f"prediction drift_baseline is missing visitor features: {missing_drift}"
+        )
+
     trained_at = raw.get("trained_at")
 
     return PredictionModelArtifact(
@@ -102,11 +124,9 @@ def _validate(raw: dict[str, Any]) -> PredictionModelArtifact:
         heads=parsed_heads,
         biases=parsed_biases,
         metrics={key: float(value) for key, value in metrics.items()},
-        training_data=dict(raw.get("training_data") or {}),
-        drift_baseline={
-            key: float(value)
-            for key, value in (raw.get("drift_baseline") or {}).items()
-        },
+        training_data=dict(training_data),
+        drift_baseline={key: float(value) for key, value in drift.items()},
+        backtest=dict(raw.get("backtest") or {}),
     )
 
 
@@ -114,3 +134,8 @@ def _validate(raw: dict[str, Any]) -> PredictionModelArtifact:
 def load_prediction_model(path: str | None = None) -> PredictionModelArtifact:
     """Load and validate a promoted prediction model artifact."""
     return _validate(_read_artifact(path))
+
+
+def validate_prediction_artifact(raw: dict[str, Any]) -> PredictionModelArtifact:
+    """DB 레지스트리 raw artifact 검증/파싱(서빙 계약 강제)."""
+    return _validate(raw)

@@ -161,6 +161,62 @@ def _head_metrics(
     return round(auc(labels, predictions), 6), round(log_loss(labels, predictions), 6)
 
 
+def _holdout_split(
+    examples: list[Example], holdout_every: int = 5
+) -> tuple[list[Example], list[Example]]:
+    """결정론적 holdout 분할(매 holdout_every 번째 행). 재현 가능."""
+    holdout = [ex for i, ex in enumerate(examples) if i % holdout_every == 0]
+    train = [ex for i, ex in enumerate(examples) if i % holdout_every != 0]
+    if not train or not holdout:
+        return examples, []
+    return train, holdout
+
+
+def _backtest(
+    examples: list[Example],
+    *,
+    epochs: int,
+    learning_rate: float,
+    l2: float,
+) -> dict:
+    """train 분할로 재학습 후 holdout 으로 out-of-sample 지표를 산출한다."""
+    train, holdout = _holdout_split(examples)
+    if not holdout:
+        return {"holdout_size": 0, "note": "dataset too small for holdout"}
+
+    def _eval(label_attr: str, feature_attr: str, feature_names: tuple[str, ...]):
+        train_rows = [(getattr(ex, feature_attr), getattr(ex, label_attr)) for ex in train]
+        holdout_rows = [(getattr(ex, feature_attr), getattr(ex, label_attr)) for ex in holdout]
+        bias, weights = train_head(
+            train_rows, feature_names, epochs=epochs, learning_rate=learning_rate, l2=l2
+        )
+        return _head_metrics(holdout_rows, feature_names, bias, weights)
+
+    purchase_auc, purchase_loss = _eval("purchase_label", "visitor_features", VISITOR_FEATURE_NAMES)
+    churn_auc, churn_loss = _eval("churn_label", "visitor_features", VISITOR_FEATURE_NAMES)
+    affinity_auc, affinity_loss = _eval("affinity_label", "affinity_features", AFFINITY_FEATURE_NAMES)
+    return {
+        "holdout_size": len(holdout),
+        "train_size": len(train),
+        "split": "deterministic_every_5",
+        "purchase_auc": purchase_auc,
+        "purchase_log_loss": purchase_loss,
+        "churn_auc": churn_auc,
+        "churn_log_loss": churn_loss,
+        "affinity_auc": affinity_auc,
+        "affinity_log_loss": affinity_loss,
+    }
+
+
+def _drift_baseline(examples: list[Example]) -> dict[str, float]:
+    """학습 데이터의 visitor feature 평균 분포 (서빙 drift 비교 기준)."""
+    n = len(examples)
+    return {
+        name: round(sum(ex.visitor_features[name] for ex in examples) / n, 6)
+        for name in VISITOR_FEATURE_NAMES
+    }
+
+
 def build_artifact(
     examples: list[Example],
     *,
@@ -244,28 +300,72 @@ def build_artifact(
                 sum(ex.affinity_label for ex in examples) / len(examples), 6
             ),
         },
+        # holdout 기반 out-of-sample 지표(과적합 방지 검증용). metrics 는 in-sample.
+        "backtest": _backtest(
+            examples, epochs=epochs, learning_rate=learning_rate, l2=l2
+        ),
+        # 학습 feature 분포(서빙 drift 비교 기준).
+        "drift_baseline": _drift_baseline(examples),
     }
 
 
+def artifact_without_trained_at(artifact: dict) -> dict:
+    """재현성 비교용: 매 실행마다 달라지는 trained_at 만 제거."""
+    return {key: value for key, value in artifact.items() if key != "trained_at"}
+
+
 def main() -> None:
+    from app.prediction.training.baseline import baseline_csv_path, write_baseline_csv
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--model-version", default="ml.logistic-prediction.custom")
+    parser.add_argument(
+        "--input", type=Path, default=None,
+        help="학습 CSV. 미지정 시 결정론적 baseline 데이터셋을 생성/사용.",
+    )
+    parser.add_argument(
+        "--output", type=Path,
+        default=Path("app/prediction/models/prediction_model.json"),
+    )
+    parser.add_argument("--model-version", default="ml.logistic-prediction.v3")
     parser.add_argument("--epochs", type=int, default=400)
     parser.add_argument("--learning-rate", type=float, default=0.15)
     parser.add_argument("--l2", type=float, default=0.001)
+    parser.add_argument(
+        "--check", action="store_true",
+        help="기존 --output 이 현재 학습 데이터로 재현되는지만 검증(쓰기 없음).",
+    )
     args = parser.parse_args()
 
-    examples = load_examples(args.input)
+    input_path = args.input
+    if input_path is None:
+        input_path = baseline_csv_path()
+        if not input_path.exists():
+            write_baseline_csv(input_path)
+        # 머신 독립적·재현 가능한 안정 식별자(절대경로 임베드 방지).
+        source = "baseline_offline.csv (deterministic synthetic)"
+    else:
+        source = str(input_path)
+
+    examples = load_examples(input_path)
     artifact = build_artifact(
         examples,
-        source=str(args.input),
+        source=source,
         model_version=args.model_version,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         l2=args.l2,
     )
+
+    if args.check:
+        existing = json.loads(args.output.read_text(encoding="utf-8"))
+        if artifact_without_trained_at(existing) != artifact_without_trained_at(artifact):
+            raise SystemExit(
+                "served artifact is NOT reproducible from training data "
+                "(hand-edit or drifted source detected)"
+            )
+        print("OK: served artifact is reproducible from training data")
+        return
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(artifact, indent=2, sort_keys=True) + "\n",

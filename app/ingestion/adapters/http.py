@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -23,8 +24,10 @@ from app.ingestion.adapters.kafka import (
     KafkaPublishError,
     create_aiokafka_producer,
 )
+from app.ingestion.adapters.outbox import SqlOutboxStore
 from app.ingestion.adapters.repository import SqlEventRepository
 from app.ingestion.application.collect_events import CollectEvents
+from app.ingestion.application.relay import RelayOutbox
 from app.ingestion.domain.model import TrackingEvent
 
 router = APIRouter(prefix="/v1", tags=["ingestion"])
@@ -42,6 +45,9 @@ def get_collect_use_case(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kafka producer is not ready",
             )
+        outbox = (
+            SqlOutboxStore(session) if settings.ingestion_outbox_enabled else None
+        )
         return CollectEvents(
             KafkaEventRepository(
                 producer,
@@ -50,6 +56,8 @@ def get_collect_use_case(
                     settings.kafka_dlq_topic if settings.kafka_dlq_enabled else None
                 ),
                 publish_attempts=settings.kafka_publish_attempts,
+                outbox=outbox,
+                outbox_max_pending=settings.ingestion_outbox_max_pending,
             )
         )
     mirror = None
@@ -151,3 +159,46 @@ async def collect(
         duplicates=result.duplicates,
         received_at=received_at,
     )
+
+
+class OutboxStatusResponse(BaseModel):
+    pending: int
+
+
+class OutboxRelayResponse(BaseModel):
+    relayed: int
+    pending: int
+
+
+@router.get("/ingestion/outbox/status", response_model=OutboxStatusResponse)
+async def outbox_status(
+    tenant_id: str = Depends(require_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> OutboxStatusResponse:
+    pending = await SqlOutboxStore(session).pending_count(tenant_id)
+    return OutboxStatusResponse(pending=pending)
+
+
+@router.post("/ingestion/outbox/relay", response_model=OutboxRelayResponse)
+async def relay_outbox(
+    request: Request,
+    tenant_id: str = Depends(require_tenant),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OutboxRelayResponse:
+    """보존된 outbox 이벤트를 Kafka 로 재발행한다(스케줄러/운영자가 호출).
+
+    테넌트 스코프(인증 컨텍스트)로 동작한다. 시스템 전역 relay 는 테넌트별로 반복 호출.
+    """
+    producer = getattr(request.app.state, "kafka_producer", None)
+    if producer is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Kafka producer is not ready",
+        )
+    store = SqlOutboxStore(session)
+    relayed = await RelayOutbox(
+        store, producer, batch=settings.ingestion_outbox_relay_batch
+    ).run_once(tenant_id)
+    pending = await store.pending_count(tenant_id)
+    return OutboxRelayResponse(relayed=relayed, pending=pending)

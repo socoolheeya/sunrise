@@ -7,8 +7,10 @@ from datetime import datetime
 
 from app.analytics.domain.model import (
     AttributionChannel,
+    CohortReport,
     DataTalkSnapshot,
     InflowChannel,
+    LifecycleSegment,
     MetricInputs,
     RevenueBreakdown,
     VisitorLifecycleInput,
@@ -85,4 +87,56 @@ class AnalyticsRepository(ABC):
         snapshot: DataTalkSnapshot,
     ) -> None:
         """DataTalk 리포트 snapshot 저장."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def refresh_order_facts(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        attribution_window_hours: int,
+    ) -> int:
+        """기간 내 raw 이벤트를 order_fact read model 로 머티리얼라이즈하고 주문 수 반환."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def order_revenue_breakdown(
+        self, tenant_id: str, start: datetime, end: datetime
+    ) -> RevenueBreakdown:
+        """order_fact 원장 기반 매출 breakdown(주문 단위 중복제거)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def refresh_lifecycle_segments(
+        self, tenant_id: str, start: datetime, end: datetime, as_of: datetime
+    ) -> int:
+        """기간 집계로 as_of 시점 고객 세그먼트 스냅샷을 머티리얼라이즈하고 인원 반환."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def segment_snapshot(
+        self, tenant_id: str, as_of: datetime
+    ) -> list[LifecycleSegment]:
+        """as_of 시점 고객 세그먼트 스냅샷 조회."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def refresh_cohort_retention(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        cohort_type: str,
+        granularity: str,
+        max_offset: int,
+    ) -> int:
+        """기간 이벤트로 cohort_retention read model 을 머티리얼라이즈하고 셀 수 반환."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def cohort_retention(
+        self, tenant_id: str, cohort_type: str, granularity: str
+    ) -> CohortReport:
+        """머티리얼라이즈된 cohort retention 매트릭스 조회."""
         raise NotImplementedError

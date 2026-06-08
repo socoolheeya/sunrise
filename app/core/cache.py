@@ -18,6 +18,14 @@ class Cache(ABC):
     @abstractmethod
     async def set(self, key: str, value: str, ttl_seconds: int) -> None: ...
 
+    async def delete(self, key: str) -> None:
+        """캐시 무효화. 기본 no-op(무동작 캐시는 무시)."""
+        return None
+
+    async def delete_prefix(self, prefix: str) -> None:
+        """접두사 일치 키를 일괄 무효화. 기본 no-op."""
+        return None
+
 
 class NullCache(Cache):
     """캐시 비활성. 항상 miss."""
@@ -38,6 +46,19 @@ class RedisCache(Cache):
 
     async def set(self, key: str, value: str, ttl_seconds: int) -> None:
         await self._client.set(key, value, ex=ttl_seconds)
+
+    async def delete(self, key: str) -> None:
+        await self._client.delete(key)
+
+    async def delete_prefix(self, prefix: str) -> None:
+        cursor = 0
+        pattern = f"{prefix}*"
+        while True:
+            cursor, keys = await self._client.scan(cursor=cursor, match=pattern, count=200)
+            if keys:
+                await self._client.delete(*keys)
+            if cursor == 0:
+                break
 
 
 _cache: Cache | None = None

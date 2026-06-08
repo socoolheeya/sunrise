@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audience.application.preview import AudienceRuleEvaluator, resolve_rule, rule_hash
+from app.audience.application.preview import (
+    AudienceRuleEvaluator,
+    resolve_rule,
+    rule_hash,
+    template_external_fields,
+)
 from app.audience.application.templates import (
     CATALOG_VERSION,
     GetAudienceTemplate,
@@ -35,6 +40,10 @@ class AudienceTemplateResponse(BaseModel):
     recommended_channels: list[str]
     recommended_trigger: str
     tags: list[str]
+    # 이 배포에서 외부 소스(동의/쿠폰/배송 등)가 없어 평가 불가한 필드.
+    external_fields: list[str] = []
+    # 외부 필드 의존이 없어 현재 배포에서 실모수 평가가 가능한 템플릿인지.
+    evaluable: bool = True
 
 
 class AudienceTemplateListResponse(BaseModel):
@@ -85,6 +94,7 @@ def _default_window(
 
 
 def _response(template: AudienceTemplate) -> AudienceTemplateResponse:
+    external = template_external_fields(template.rule)
     return AudienceTemplateResponse(
         template_id=template.template_id,
         name=template.name,
@@ -94,6 +104,8 @@ def _response(template: AudienceTemplate) -> AudienceTemplateResponse:
         recommended_channels=list(template.recommended_channels),
         recommended_trigger=template.recommended_trigger,
         tags=list(template.tags),
+        external_fields=external,
+        evaluable=not external,
     )
 
 

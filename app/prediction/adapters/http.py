@@ -10,9 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_session
+from app.core.model_registry import ModelRegistryStore, parse_cached
 from app.core.tenant import require_tenant
 from app.events.registry import PREDICTION_RESPONSE_SCHEMA_VERSION
-from app.prediction.adapters.model_registry import load_prediction_model
+from app.prediction.adapters.model_registry import (
+    load_prediction_model,
+    validate_prediction_artifact,
+)
 from app.prediction.adapters.clickhouse import ClickHousePredictionRepository
 from app.prediction.adapters.repository import SqlPredictionRepository
 from app.prediction.application.scoring import (
@@ -109,6 +113,7 @@ class ModelStatusResponse(BaseModel):
     visitor_features: list[str]
     affinity_features: list[str]
     metrics: dict[str, float]
+    backtest: dict[str, str | int | float]
     training_data: dict[str, str | int | float]
     drift_baseline: dict[str, float]
     readiness: str
@@ -164,9 +169,17 @@ def get_prediction_repo(
     return SqlPredictionRepository(session)
 
 
-def get_prediction_model(
+async def get_prediction_model(
+    tenant_id: str = Depends(require_tenant),
+    session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> PredictionModelArtifact:
+    # 테넌트 production 버전(DB 레지스트리) 우선 → 없으면 패키지 동봉 seed.
+    active = await ModelRegistryStore(session).active(tenant_id, "prediction")
+    if active is not None:
+        return parse_cached(
+            "prediction", active.version, active.artifact, validate_prediction_artifact
+        )
     return load_prediction_model(settings.prediction_model_path)
 
 
@@ -233,6 +246,7 @@ async def model_status(
         visitor_features=list(model_artifact.visitor_features),
         affinity_features=list(model_artifact.affinity_features),
         metrics=dict(model_artifact.metrics),
+        backtest=dict(model_artifact.backtest),
         training_data=dict(model_artifact.training_data),
         drift_baseline=dict(model_artifact.drift_baseline),
         readiness=_readiness(model_artifact, now),
