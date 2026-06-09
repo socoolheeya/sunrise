@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sunrise Analytics — 기능·역할 · DB 명세서 · 용어집</title>
+  <style>
+    :root{ --bg:#f6f7f9; --paper:#fff; --ink:#18212f; --muted:#5b6675; --line:#d8dee8;
+      --soft:#eef2f7; --blue:#2563eb; --green:#047857; --amber:#92400e; --violet:#6d28d9; --code-bg:#0f172a; --code-ink:#e2e8f0; }
+    *{ box-sizing:border-box; }
+    body{ margin:0; background:var(--bg); color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo",sans-serif; line-height:1.62; }
+    .layout{ display:grid; grid-template-columns:280px 1fr; }
+    nav{ position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto;
+      background:var(--paper); border-right:1px solid var(--line); padding:20px 16px; font-size:13px; }
+    nav h2{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:18px 0 8px; }
+    nav a{ display:block; color:var(--ink); text-decoration:none; padding:4px 8px; border-radius:6px; }
+    nav a:hover{ background:var(--soft); color:var(--blue); }
+    nav .brand{ font-weight:700; font-size:16px; } nav .sub{ color:var(--muted); font-size:12px; margin-bottom:8px; }
+    main{ padding:32px 40px 120px; max-width:1080px; }
+    h1{ font-size:27px; margin:0 0 6px; } .lede{ color:var(--muted); margin:0 0 22px; }
+    section{ background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:24px 26px; margin:0 0 24px; }
+    section>h2{ margin-top:0; font-size:20px; }
+    h3{ font-size:15.5px; margin:22px 0 8px; border-left:3px solid var(--blue); padding-left:9px; }
+    h3 .pill{ font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+    .p-src{ background:#e0edff; color:var(--blue); } .p-read{ background:#fef3c7; color:var(--amber); }
+    .p-snap{ background:#ecfdf5; color:var(--green); }
+    p{ margin:8px 0; }
+    code{ background:var(--soft); padding:1px 5px; border-radius:5px; font-family:"SFMono-Regular",Consolas,monospace; font-size:12.5px; }
+    table{ width:100%; border-collapse:collapse; margin:10px 0; font-size:12.5px; }
+    th,td{ border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
+    th{ background:var(--soft); font-weight:600; }
+    td.col{ font-family:"SFMono-Regular",Consolas,monospace; font-weight:600; white-space:nowrap; }
+    td.ty{ font-family:"SFMono-Regular",Consolas,monospace; color:var(--muted); white-space:nowrap; }
+    .pk{ color:var(--blue); font-weight:700; }
+    .meta{ font-size:12px; color:var(--muted); margin:4px 0 0; }
+    .meta b{ color:var(--ink); }
+    .note{ background:#fffbeb; border:1px solid #fde68a; border-radius:9px; padding:10px 14px; margin:12px 0; font-size:13px; color:#78350f; }
+    .term{ border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin:10px 0; }
+    .term h4{ margin:0 0 4px; font-size:14px; } .term p{ margin:4px 0; font-size:13px; }
+    .ddl{ background:var(--code-bg); color:var(--code-ink); border-radius:10px; padding:12px 14px; margin:8px 0;
+      font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; overflow-x:auto; white-space:pre; }
+    @media (max-width:980px){ .layout{ grid-template-columns:1fr; } nav{ position:static; height:auto; } }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <div class="brand">Sunrise Analytics</div>
+    <div class="sub">기능 · DB 명세 · 용어</div>
+    <h2>기능</h2>
+    <a href="#roles">기능과 역할</a>
+    <a href="#endpoints">엔드포인트 ↔ 테이블</a>
+    <h2>DB 명세서 (SQL)</h2>
+    <a href="#events">events</a>
+    <a href="#order_facts">order_facts</a>
+    <a href="#segment_daily">customer_segment_daily</a>
+    <a href="#cohort">cohort_retention</a>
+    <a href="#datatalk">datatalk_snapshots</a>
+    <a href="#typemap">타입 매핑</a>
+    <h2>DB 명세서 (ClickHouse)</h2>
+    <a href="#ch">OLAP 테이블 · MV</a>
+    <h2>용어집</h2>
+    <a href="#glossary">read model 외 용어</a>
+  </nav>
+
+  <main>
+    <h1>Analytics — 기능·역할 · DB 명세서 · 용어집</h1>
+    <p class="lede"><code>app/analytics/</code>가 하는 일, 사용·생성하는 DB 테이블의 컬럼/제약/인덱스 명세, 그리고 read model을 포함한 핵심 용어 설명입니다. 모든 내용은 현재 구현(<code>orm.py</code>, migrations 0004~0008, <code>clickhouse/init/001_events.sql</code>) 기준입니다.</p>
+
+    <!-- ROLES -->
+    <section id="roles">
+      <h2>1. Analytics 기능과 역할</h2>
+      <p>Analytics는 수집된 행동 이벤트를 <b>마케터·콘솔이 읽는 분석 지표/리포트로 가공</b>하는 읽기 전용(CQRS Read) 영역입니다. 쓰기(수집)와 분리되어, 무거운 집계는 목적별 <b>read model</b>로 미리 적재하고 조회는 캐시로 가속합니다.</p>
+      <table>
+        <tr><th>기능</th><th>역할(무엇을 답하나)</th><th>핵심 산출</th></tr>
+        <tr><td>metrics</td><td>이 기간 장사 잘됐나?</td><td>매출·세션·CVR·AOV·재구매율</td></tr>
+        <tr><td>funnel</td><td>어느 단계에서 이탈하나?</td><td>조회→장바구니→구매 순방문자·이탈률</td></tr>
+        <tr><td>cohort / retention</td><td>첫 행동 이후 다시 오나?</td><td>일/주/월 코호트 잔존율 매트릭스</td></tr>
+        <tr><td>benchmark</td><td>플랫폼 평균 대비 어떤가?</td><td>지표별 편차비(delta_ratio)</td></tr>
+        <tr><td>inflow</td><td>어느 유입 채널이 좋은가?</td><td>채널별 세션·구매·매출·CVR·AOV</td></tr>
+        <tr><td>revenue breakdown</td><td>추적 못한 매출은 얼마?</td><td>총/온사이트/숨은/기여 매출</td></tr>
+        <tr><td>attribution</td><td>어느 캠페인이 매출에 기여?</td><td>last-touch 채널별 기여 매출</td></tr>
+        <tr><td>segments / transitions</td><td>고객 생애주기가 어떻게 이동?</td><td>방문/구매 세그먼트 + 이동 경로</td></tr>
+        <tr><td>datatalk</td><td>오늘의 사이트 요약은?</td><td>일일 프로파일링 리포트 + 이상치(frozen)</td></tr>
+      </table>
+      <p class="meta"><b>설계 원칙</b> — ① 모든 쿼리에 <code>tenant_id</code> 강제(격리), ② 일 경계 윈도우 정렬로 캐시 적중률↑, ③ 구매는 <code>order_id</code> 단위 중복제거, ④ SQL/ClickHouse 두 백엔드가 동일 포트 계약을 구현(대칭).</p>
+    </section>
+
+    <!-- ENDPOINTS -->
+    <section id="endpoints">
+      <h2>2. 엔드포인트 ↔ 테이블 매핑</h2>
+      <table>
+        <tr><th>엔드포인트</th><th>읽는/쓰는 테이블</th><th>방식</th></tr>
+        <tr><td>GET /metrics · /funnel · /benchmark · /inflow · /attribution · /segments</td><td><code>events</code></td><td>온더플라이 집계(매 요청 스캔 + 캐시)</td></tr>
+        <tr><td>GET /cohort (월간 lite)</td><td><code>events</code></td><td>온더플라이</td></tr>
+        <tr><td>POST /cohort/refresh → GET /cohort/retention</td><td><code>events</code> → <code>cohort_retention</code></td><td>read model 적재 → 조회</td></tr>
+        <tr><td>POST /order-fact/refresh → GET /order-fact/revenue-breakdown</td><td><code>events</code> → <code>order_facts</code></td><td>read model 적재 → 조회</td></tr>
+        <tr><td>POST /segments/refresh → GET /segments/transitions</td><td><code>events</code> → <code>customer_segment_daily</code></td><td>read model 적재 → 조회</td></tr>
+        <tr><td>GET /datatalk → POST /datatalk/snapshot</td><td><code>events</code> → <code>datatalk_snapshots</code></td><td>합성 리포트 → frozen 저장</td></tr>
+      </table>
+    </section>
+
+    <!-- ======================= SQL DB SPEC ======================= -->
+    <section id="events">
+      <h2>3. DB 명세서 (관계형 / SQLite·PostgreSQL)</h2>
+      <h3>events <span class="pill p-src">원천(source)</span></h3>
+      <p>행동 이벤트 원장. analytics의 모든 온더플라이 집계와 read model 적재(refresh)의 입력. 수집(ingestion)과 공유합니다(lite 모드).</p>
+      <p class="meta"><b>PK</b> id · <b>UNIQUE</b> (tenant_id, event_id) <code>uq_events_tenant_event</code> (멱등) · <b>INDEX</b> (tenant_id,occurred_at) / (tenant_id,visitor_id) / (tenant_id,session_id) / (tenant_id,order_id)</p>
+      <table>
+        <tr><th>컬럼</th><th>타입</th><th>NULL</th><th>설명</th></tr>
+        <tr><td class="col pk">id</td><td class="ty">BIGINT (SQLite INTEGER)</td><td>N</td><td>PK, auto-increment</td></tr>
+        <tr><td class="col">tenant_id</td><td class="ty">VARCHAR(64)</td><td>N</td><td>테넌트(쇼핑몰) 식별자 — 모든 격리의 기준</td></tr>
+        <tr><td class="col">event_id</td><td class="ty">VARCHAR(128)</td><td>N</td><td>멱등 키(클라이언트 생성)</td></tr>
+        <tr><td class="col">visitor_id</td><td class="ty">VARCHAR(128)</td><td>N</td><td>방문자(익명 포함) 식별자</td></tr>
+        <tr><td class="col">type</td><td class="ty">VARCHAR(32)</td><td>N</td><td>view·cart_add·purchase·campaign_impression 등</td></tr>
+        <tr><td class="col">product_id</td><td class="ty">VARCHAR(128)</td><td>Y</td><td>상품 식별자(상품/카테고리 분석)</td></tr>
+        <tr><td class="col">category</td><td class="ty">VARCHAR(128)</td><td>Y</td><td>카테고리(유입 fallback·코호트)</td></tr>
+        <tr><td class="col">session_id</td><td class="ty">VARCHAR(128)</td><td>Y</td><td>세션 — 세션 수·onsite_matched 판정</td></tr>
+        <tr><td class="col">order_id</td><td class="ty">VARCHAR(128)</td><td>Y</td><td>주문 — 매출 중복제거 키</td></tr>
+        <tr><td class="col">utm_source / utm_medium / utm_campaign</td><td class="ty">VARCHAR(128)</td><td>Y</td><td>유입 차원(채널 결정·기여)</td></tr>
+        <tr><td class="col">landing_page</td><td class="ty">VARCHAR(2048)</td><td>Y</td><td>랜딩 URL</td></tr>
+        <tr><td class="col">amount</td><td class="ty">NUMERIC(12,4)</td><td>Y</td><td>구매 금액(purchase 이벤트)</td></tr>
+        <tr><td class="col">occurred_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>클라이언트 발생 시각(분석 기준 시간)</td></tr>
+        <tr><td class="col">received_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>서버 수신 시각</td></tr>
+      </table>
+    </section>
+
+    <section id="order_facts">
+      <h3 style="border:none;padding:0;margin-top:0">order_facts <span class="pill p-read">read model · 0006</span></h3>
+      <p><b>주문 단위로 중복제거된 주문 원장.</b> <code>refresh_order_facts</code>가 구매·캠페인 이벤트를 fold해 적재하고, <code>order_revenue_breakdown</code>이 이 테이블만 읽어 총/온사이트/숨은/기여 매출을 산출합니다. raw 이벤트 재스캔을 없애 정확성과 성능을 확보합니다.</p>
+      <p class="meta"><b>PK</b> id · <b>UNIQUE</b> (tenant_id, order_id) <code>uq_order_facts_tenant_order</code> · <b>INDEX</b> (tenant_id, occurred_at)</p>
+      <table>
+        <tr><th>컬럼</th><th>타입</th><th>NULL</th><th>기본값</th><th>설명</th></tr>
+        <tr><td class="col pk">id</td><td class="ty">BIGINT</td><td>N</td><td>—</td><td>PK</td></tr>
+        <tr><td class="col">tenant_id</td><td class="ty">VARCHAR(64)</td><td>N</td><td>—</td><td>테넌트</td></tr>
+        <tr><td class="col">order_id</td><td class="ty">VARCHAR(128)</td><td>N</td><td>—</td><td>주문 키(없으면 합성 키)</td></tr>
+        <tr><td class="col">visitor_id</td><td class="ty">VARCHAR(128)</td><td>N</td><td>—</td><td>주문 방문자</td></tr>
+        <tr><td class="col">amount</td><td class="ty">DOUBLE / REAL</td><td>N</td><td>0.0</td><td>주문 금액(첫 purchase 채택)</td></tr>
+        <tr><td class="col">status</td><td class="ty">VARCHAR(32)</td><td>N</td><td>completed</td><td>주문 상태(취소/환불 이벤트 도입 시 확장)</td></tr>
+        <tr><td class="col">channel</td><td class="ty">VARCHAR(128)</td><td>N</td><td>unknown</td><td>주문 채널(utm/카테고리 파생)</td></tr>
+        <tr><td class="col">onsite_matched</td><td class="ty">BOOLEAN</td><td>N</td><td>false</td><td>온사이트 추적 주문 여부(session 동반)</td></tr>
+        <tr><td class="col">attributed</td><td class="ty">BOOLEAN</td><td>N</td><td>false</td><td>attribution window 내 캠페인 기여 여부</td></tr>
+        <tr><td class="col">attributed_channel</td><td class="ty">VARCHAR(128)</td><td>Y</td><td>—</td><td>기여 last-touch 채널</td></tr>
+        <tr><td class="col">occurred_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>—</td><td>구매 시각</td></tr>
+        <tr><td class="col">created_at / updated_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>—</td><td>적재/갱신 시각</td></tr>
+      </table>
+    </section>
+
+    <section id="segment_daily">
+      <h3 style="border:none;padding:0;margin-top:0">customer_segment_daily <span class="pill p-read">read model · 0007</span></h3>
+      <p><b>방문/구매 lifecycle 세그먼트의 일자별 스냅샷.</b> <code>refresh_lifecycle_segments</code>가 as_of 시점 기준으로 분류해 적재하고, 두 as_of 스냅샷을 비교해 <b>세그먼트 이동(transition)</b>을 산출합니다.</p>
+      <p class="meta"><b>PK</b> id · <b>UNIQUE</b> (tenant_id, customer_id, as_of) <code>uq_customer_segment_daily</code> · <b>INDEX</b> (tenant_id, as_of)</p>
+      <table>
+        <tr><th>컬럼</th><th>타입</th><th>NULL</th><th>기본값</th><th>설명</th></tr>
+        <tr><td class="col pk">id</td><td class="ty">BIGINT</td><td>N</td><td>—</td><td>PK</td></tr>
+        <tr><td class="col">tenant_id</td><td class="ty">VARCHAR(64)</td><td>N</td><td>—</td><td>테넌트</td></tr>
+        <tr><td class="col">customer_id</td><td class="ty">VARCHAR(128)</td><td>N</td><td>—</td><td>고객(=visitor_id)</td></tr>
+        <tr><td class="col">as_of</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>—</td><td>스냅샷 기준 시각</td></tr>
+        <tr><td class="col">visit_segment</td><td class="ty">VARCHAR(32)</td><td>N</td><td>—</td><td>visit_active / visit_risk / visit_inactive</td></tr>
+        <tr><td class="col">purchase_segment</td><td class="ty">VARCHAR(32)</td><td>N</td><td>—</td><td>no_purchase / purchase_active / risk / inactive</td></tr>
+        <tr><td class="col">revenue</td><td class="ty">DOUBLE / REAL</td><td>N</td><td>0.0</td><td>기간 누적 매출</td></tr>
+        <tr><td class="col">created_at / updated_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>—</td><td>적재/갱신 시각</td></tr>
+      </table>
+    </section>
+
+    <section id="cohort">
+      <h3 style="border:none;padding:0;margin-top:0">cohort_retention <span class="pill p-read">read model · 0008</span></h3>
+      <p><b>일/주/월 코호트 잔존율을 셀 단위로 저장.</b> <code>refresh_cohort_retention</code>이 delete-then-insert로 적재, <code>cohort_retention</code> 조회가 행들을 매트릭스로 재구성합니다. 한 행 = (코호트 × offset) 한 칸.</p>
+      <p class="meta"><b>PK</b> id · <b>UNIQUE</b> (tenant_id, cohort_type, granularity, cohort, offset) <code>uq_cohort_retention_cell</code> · <b>INDEX</b> (tenant_id, cohort_type, granularity)</p>
+      <table>
+        <tr><th>컬럼</th><th>타입</th><th>NULL</th><th>설명</th></tr>
+        <tr><td class="col pk">id</td><td class="ty">BIGINT</td><td>N</td><td>PK</td></tr>
+        <tr><td class="col">tenant_id</td><td class="ty">VARCHAR(64)</td><td>N</td><td>테넌트</td></tr>
+        <tr><td class="col">cohort_type</td><td class="ty">VARCHAR(32)</td><td>N</td><td>visit | purchase</td></tr>
+        <tr><td class="col">granularity</td><td class="ty">VARCHAR(16)</td><td>N</td><td>day | week | month</td></tr>
+        <tr><td class="col">cohort</td><td class="ty">VARCHAR(32)</td><td>N</td><td>코호트 라벨(첫 활동 버킷, 예: 2026-06-01)</td></tr>
+        <tr><td class="col">offset</td><td class="ty">INTEGER</td><td>N</td><td>경과 버킷 수(0=첫 버킷, 0..max)</td></tr>
+        <tr><td class="col">base_count</td><td class="ty">INTEGER</td><td>N</td><td>코호트 모수(cohort size)</td></tr>
+        <tr><td class="col">retained_count</td><td class="ty">INTEGER</td><td>N</td><td>해당 offset 잔존(활동) 인원</td></tr>
+        <tr><td class="col">retention_rate</td><td class="ty">DOUBLE / REAL</td><td>N</td><td>retained_count / base_count</td></tr>
+        <tr><td class="col">created_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>적재 시각</td></tr>
+      </table>
+    </section>
+
+    <section id="datatalk">
+      <h3 style="border:none;padding:0;margin-top:0">datatalk_snapshots <span class="pill p-snap">snapshot · 0005</span></h3>
+      <p><b>DataTalk 일일 리포트의 frozen(고정) 저장.</b> 전일 지표를 고정해 재현 가능한 리포트로 보관합니다. ClickHouse 모드에서도 이 관계형 테이블에 위임 저장됩니다.</p>
+      <p class="meta"><b>PK</b> id · <b>UNIQUE</b> (tenant_id, snapshot_id) <code>uq_datatalk_snapshot</code> · <b>INDEX</b> (tenant_id, start_at, end_at)</p>
+      <table>
+        <tr><th>컬럼</th><th>타입</th><th>NULL</th><th>설명</th></tr>
+        <tr><td class="col pk">id</td><td class="ty">BIGINT</td><td>N</td><td>PK</td></tr>
+        <tr><td class="col">tenant_id</td><td class="ty">VARCHAR(64)</td><td>N</td><td>테넌트</td></tr>
+        <tr><td class="col">snapshot_id</td><td class="ty">VARCHAR(128)</td><td>N</td><td>sha256(tenant:start:end)[:24]</td></tr>
+        <tr><td class="col">start_at / end_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>리포트 기간</td></tr>
+        <tr><td class="col">status</td><td class="ty">VARCHAR(32)</td><td>N</td><td>frozen</td></tr>
+        <tr><td class="col">payload_json</td><td class="ty">TEXT</td><td>N</td><td>리포트 본문 JSON(metrics·funnel·revenue·top inflow·anomalies)</td></tr>
+        <tr><td class="col">generated_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>리포트 생성 시각</td></tr>
+        <tr><td class="col">created_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>저장 시각</td></tr>
+      </table>
+    </section>
+
+    <section id="typemap">
+      <h3 style="border:none;padding:0;margin-top:0">타입 매핑 (SQLAlchemy → DB)</h3>
+      <table>
+        <tr><th>코드(ORM)</th><th>PostgreSQL</th><th>SQLite</th></tr>
+        <tr><td class="ty">BigInteger().with_variant(Integer,"sqlite")</td><td class="ty">BIGINT</td><td class="ty">INTEGER(autoincrement)</td></tr>
+        <tr><td class="ty">String(n)</td><td class="ty">VARCHAR(n)</td><td class="ty">VARCHAR(n)</td></tr>
+        <tr><td class="ty">Numeric(12,4)</td><td class="ty">NUMERIC(12,4)</td><td class="ty">NUMERIC</td></tr>
+        <tr><td class="ty">Float</td><td class="ty">DOUBLE PRECISION</td><td class="ty">REAL</td></tr>
+        <tr><td class="ty">Boolean / Integer / Text</td><td class="ty">BOOLEAN / INTEGER / TEXT</td><td class="ty">BOOLEAN / INTEGER / TEXT</td></tr>
+        <tr><td class="ty">DateTime(timezone=True)</td><td class="ty">TIMESTAMPTZ</td><td class="ty">ISO8601 문자열(tz 포함)</td></tr>
+      </table>
+      <p class="meta">스키마는 Alembic 마이그레이션(<code>migrations/versions/0005~0008</code>)로 관리합니다. 운영(PostgreSQL)/로컬·테스트(SQLite) 모두 동일 ORM에서 dialect variant로 생성됩니다.</p>
+    </section>
+
+    <!-- ======================= CLICKHOUSE SPEC ======================= -->
+    <section id="ch">
+      <h2>4. DB 명세서 (ClickHouse / 운영 OLAP)</h2>
+      <p>운영 모드에서 이벤트는 Kafka → ClickHouse로 적재됩니다. analytics 조회는 ClickHouse 어댑터가 담당하며, read model(order_facts/segment/cohort)은 refresh가 적재한 테이블을 SELECT합니다(SQL과 대칭). DDL은 <code>clickhouse/init/001_events.sql</code>.</p>
+      <table>
+        <tr><th>테이블 / MV</th><th>엔진</th><th>ORDER BY / 키</th><th>역할</th></tr>
+        <tr><td class="col">events</td><td class="ty">ReplacingMergeTree(received_at)</td><td class="ty">(tenant_id, event_id)<br/>PARTITION toYYYYMM(occurred_at)</td><td>이벤트 원천(event_id 단위 최신본 collapse)</td></tr>
+        <tr><td class="col">raw_events_queue</td><td class="ty">Kafka engine</td><td class="ty">raw.events 토픽 소비</td><td>Kafka → events 적재 진입점</td></tr>
+        <tr><td class="col">raw_events_to_events</td><td class="ty">Materialized View</td><td class="ty">→ events</td><td>큐 → events 변환 적재</td></tr>
+        <tr><td class="col">agg_metric_daily_v2</td><td class="ty">AggregatingMergeTree</td><td class="ty">(tenant_id, period)</td><td>일별 지표 사전집계(uniqState 등) — 주의: 주문 dedup 미보장이라 metrics는 raw 경로 사용</td></tr>
+        <tr><td class="col">order_facts</td><td class="ty">ReplacingMergeTree(computed_at)</td><td class="ty">(tenant_id, order_id)<br/>PARTITION toYYYYMM(occurred_at)</td><td>refresh 적재 read model(주문 dedup) — order_revenue_breakdown 조회</td></tr>
+        <tr><td class="col">customer_segment_daily</td><td class="ty">ReplacingMergeTree(computed_at)</td><td class="ty">(tenant_id, customer_id, as_of)</td><td>refresh 적재 세그먼트 스냅샷</td></tr>
+        <tr><td class="col">cohort_retention</td><td class="ty">ReplacingMergeTree(computed_at)</td><td class="ty">(tenant_id, cohort_type, granularity, cohort, offset)</td><td>refresh 적재 코호트 셀</td></tr>
+        <tr><td class="col">visitor_features_daily_v2</td><td class="ty">AggregatingMergeTree</td><td class="ty">(tenant_id, visitor_id, period)</td><td>방문자 일별 피처(세그먼트·예측 공용)</td></tr>
+        <tr><td class="col">product_stats_daily_v2 · visitor_product_signals_daily_v2 · product_features_v1</td><td class="ty">Aggregating / Replacing</td><td class="ty">tenant·product 키</td><td>추천/상품 분석 피처</td></tr>
+      </table>
+      <div class="ddl">-- 예: ClickHouse order_facts (refresh 적재 대상)
+CREATE TABLE sunrise.order_facts (
+  tenant_id LowCardinality(String), order_id String, visitor_id String,
+  amount Float64, status LowCardinality(String), channel LowCardinality(String),
+  onsite_matched Bool, attributed Bool, attributed_channel Nullable(String),
+  occurred_at DateTime64(3,'UTC'), computed_at DateTime64(3,'UTC')
+) ENGINE = ReplacingMergeTree(computed_at)
+  PARTITION BY toYYYYMM(occurred_at) ORDER BY (tenant_id, order_id);</div>
+      <div class="note">ClickHouse 적재는 refresh가 <code>ALTER TABLE … DELETE</code>(윈도우/키 범위) 후 <code>insert</code>하는 delete-then-insert. ReplacingMergeTree(computed_at)로 재적재 시 최신본을 채택하고, 조회는 <code>argMax(…, computed_at)</code>로 키 단위 dedup합니다.</div>
+    </section>
+
+    <!-- ======================= GLOSSARY ======================= -->
+    <section id="glossary">
+      <h2>5. 용어집 (read model 외)</h2>
+
+      <div class="term"><h4>Read Model (읽기 모델)</h4>
+        <p>쓰기용 원천(이벤트)과 분리해 <b>특정 조회에 최적화된 형태로 미리 만들어 둔 데이터</b>입니다. 매 조회마다 원천을 무겁게 집계하는 대신, refresh로 한 번 계산해 전용 테이블(<code>order_facts</code>·<code>customer_segment_daily</code>·<code>cohort_retention</code>)에 적재하고 조회는 그 테이블만 읽습니다. 정확성(중복제거 로직 1곳)·성능·재현성을 얻습니다.</p></div>
+
+      <div class="term"><h4>Materialize / Refresh (머티리얼라이즈 / 갱신)</h4>
+        <p>원천 이벤트로 read model을 <b>계산해 테이블에 적재</b>하는 작업. <code>POST /…/refresh</code> 엔드포인트(또는 스케줄러/cron)가 트리거합니다. SQL은 upsert/delete-then-insert, ClickHouse는 ALTER DELETE + insert로 멱등하게 갱신합니다.</p></div>
+
+      <div class="term"><h4>CQRS (Command Query Responsibility Segregation)</h4>
+        <p>쓰기(Command, 수집)와 읽기(Query, 분석)의 책임/모델을 분리하는 패턴. analytics는 Query 쪽으로, 읽기에 맞춘 read model과 캐시를 사용합니다.</p></div>
+
+      <div class="term"><h4>주문 단위 중복제거 (order_id dedup)</h4>
+        <p>같은 주문이 여러 purchase 이벤트(재시도·분할발송·스크립트 중복 발화)를 낼 수 있으므로, 매출·주문수는 <b><code>order_id</code> 기준으로 1건만</b> 셉니다. <code>order_facts</code>(또는 raw 집계의 dict 키)로 보장합니다.</p></div>
+
+      <div class="term"><h4>onsite_matched (온사이트 추적 매칭)</h4>
+        <p>주문이 <b>온사이트 스크립트로 추적된 주문인지</b> 여부. 구현상 구매 이벤트에 <code>session_id</code>가 동반되면 true. 숨은 매출 산출의 기준이 됩니다.</p></div>
+
+      <div class="term"><h4>숨은 매출 (hidden revenue)</h4>
+        <p><b>총 매출 − 온사이트 추적 매출</b> = <code>max(0, total − onsite)</code>. 스크립트가 추적하지 못한(추적 손실) 매출 규모를 나타냅니다. <code>onsite_coverage_rate = onsite / total</code>로 추적 커버리지를 봅니다.</p></div>
+
+      <div class="term"><h4>기여 매출 · Attribution window · Last-touch</h4>
+        <p><b>기여 매출(attributed)</b>: 캠페인 노출/클릭 이후 일정 시간(<b>attribution window</b>) 안에 발생한 구매. <b>last-touch</b>: 구매 직전 window 내 <b>가장 마지막 접점</b> 채널에 매출을 귀속하는 규칙(model=<code>last_touch</code>).</p></div>
+
+      <div class="term"><h4>코호트 · 잔존율(Retention) · cohort_type · granularity · offset</h4>
+        <p><b>코호트</b>: 같은 시점에 첫 활동을 한 고객 집단(코호트 라벨=첫 활동 버킷). <b>granularity</b>: 버킷 단위(day/week/month). <b>offset</b>: 코호트 기준 경과 버킷 수(0=첫 버킷). <b>retention_rate</b>=해당 offset 잔존 인원/코호트 모수. <b>cohort_type</b>: 코호트 정의 이벤트(visit=방문류, purchase=구매).</p></div>
+
+      <div class="term"><h4>Lifecycle 세그먼트 (visit / purchase segment)</h4>
+        <p>고객을 최근성 기준으로 분류. <b>visit_segment</b>: 마지막 방문 경과일 ≤7 active / ≤30 risk / 그 외 inactive. <b>purchase_segment</b>: 구매 0 no_purchase / 마지막 구매 ≤30 active / ≤90 risk / 그 외 inactive.</p></div>
+
+      <div class="term"><h4>세그먼트 이동 (transition) · as_of · "absent"</h4>
+        <p>두 시점(<b>as_of</b>=스냅샷 기준 시각) 스냅샷을 비교해 고객이 어느 세그먼트→어느 세그먼트로 옮겼는지 집계. 이전 스냅샷에 없던 신규 고객의 출발 세그먼트는 <code>"absent"</code>. <b>transition_rate</b>=(from→to 인원)/(이전이 from인 현재 고객 총원).</p></div>
+
+      <div class="term"><h4>Benchmark · delta_ratio</h4>
+        <p>테넌트 지표를 <b>플랫폼(전체 테넌트) 평균</b>과 비교. <code>delta_ratio = (tenant − benchmark) / benchmark</code> (cvr·aov·repeat_rate).</p></div>
+
+      <div class="term"><h4>유입(Inflow) · 채널(channel)</h4>
+        <p>방문/구매가 어디서 왔는지. 채널은 <code>utm_medium ?? utm_source ?? category ?? "unknown"</code> 우선순위로 결정하고, 채널별 세션·구매·매출·CVR·AOV를 집계합니다.</p></div>
+
+      <div class="term"><h4>DataTalk · Frozen Snapshot</h4>
+        <p><b>DataTalk</b>: 일일 사이트 프로파일링 리포트(지표·퍼널·매출·top 유입·이상치). <b>frozen snapshot</b>: 그 리포트를 특정 시점에 <b>고정(불변)</b>해 저장한 것 — 나중에도 같은 값을 재현. status=<code>frozen</code>.</p></div>
+
+      <div class="term"><h4>이상치(Anomaly)</h4>
+        <p>DataTalk가 표시하는 단순 규칙 신호: <code>no_sessions</code>(방문 0), <code>no_conversion</code>(방문은 있으나 전환 0), <code>low_onsite_tracking_coverage</code>(매출 있으나 온사이트 커버리지 &lt; 0.5).</p></div>
+
+      <div class="term"><h4>테넌트 격리 (Tenant Isolation / Multi-tenancy)</h4>
+        <p>여러 쇼핑몰(테넌트)이 한 시스템을 공유하므로 <b>모든 쿼리에 <code>tenant_id</code>를 강제</b>해 데이터가 섞이지 않게 합니다. 예외는 벤치마크용 플랫폼 평균(전체 테넌트 익명 집계)뿐.</p></div>
+
+      <div class="term"><h4>일 경계 캐시 · 캐시 키</h4>
+        <p>조회 윈도우를 <b>일(day) 경계로 정렬</b>(end=내일 0시 UTC)해 하루 동안 캐시 키가 안정되도록 합니다. 키=<code>{schema}:{tenant}:{resource}:{start}:{end}</code>. refresh 시 관련 키를 무효화(delete/prefix)합니다.</p></div>
+
+      <div class="term"><h4>MetricInputs / DashboardMetrics</h4>
+        <p><b>MetricInputs</b>: 원시 집계값(방문자·구매자·주문수·매출·재구매자·세션). <b>DashboardMetrics</b>: 거기서 파생한 지표 — CVR=구매자/방문자, AOV=매출/주문수, repeat_rate=재구매자/구매자.</p></div>
+
+      <div class="term"><h4>ClickHouse 엔진 용어</h4>
+        <p><b>ReplacingMergeTree(ver)</b>: 같은 ORDER BY 키의 행을 <code>ver</code>(예 received_at·computed_at) 최신본으로 collapse → 멱등 적재/중복 제거에 적합. <b>AggregatingMergeTree</b>: <code>uniqState/sumState</code> 같은 부분집계 상태를 병합 저장. <b>Materialized View(MV)</b>: 원천 insert 시 자동으로 대상 테이블에 변환 적재하는 뷰. <b>Kafka engine</b>: Kafka 토픽을 테이블처럼 소비. <b>argMax(x, t)</b>: t가 최대인 행의 x.</p></div>
+
+      <div class="term"><h4>Port / Adapter / Clean Architecture</h4>
+        <p><b>Port</b>: 도메인이 정의한 인터페이스(<code>AnalyticsRepository</code> ABC). <b>Adapter</b>: 그 구현(SqlAnalyticsRepository·ClickHouseAnalyticsRepository). 유스케이스는 Port에만 의존하므로 백엔드 교체가 계약을 깨지 않습니다(<code>domain ← application ← adapters</code>).</p></div>
+
+      <div class="term"><h4>멱등성(Idempotency) · event_id</h4>
+        <p>같은 요청/이벤트가 여러 번 처리돼도 결과가 한 번 처리한 것과 같음. <code>(tenant_id, event_id)</code> 유니크 제약으로 중복 이벤트를 1건으로 보장하고, read model 적재(upsert/replace)도 멱등합니다.</p></div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

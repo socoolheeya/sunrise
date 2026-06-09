@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sunrise Audience — 기능 · UML · DB 명세 · 용어</title>
+  <style>
+    :root{ --bg:#f6f7f9; --paper:#fff; --ink:#18212f; --muted:#5b6675; --line:#d8dee8;
+      --soft:#eef2f7; --blue:#2563eb; --green:#047857; --amber:#92400e; --violet:#6d28d9; --code-bg:#0f172a; --code-ink:#e2e8f0; }
+    *{ box-sizing:border-box; }
+    body{ margin:0; background:var(--bg); color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo",sans-serif; line-height:1.62; }
+    .layout{ display:grid; grid-template-columns:280px 1fr; }
+    nav{ position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto;
+      background:var(--paper); border-right:1px solid var(--line); padding:20px 16px; font-size:13px; }
+    nav h2{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:18px 0 8px; }
+    nav a{ display:block; color:var(--ink); text-decoration:none; padding:4px 8px; border-radius:6px; }
+    nav a:hover{ background:var(--soft); color:var(--blue); }
+    nav .brand{ font-weight:700; font-size:16px; } nav .sub{ color:var(--muted); font-size:12px; margin-bottom:8px; }
+    main{ padding:32px 40px 120px; max-width:1080px; }
+    h1{ font-size:27px; margin:0 0 6px; } .lede{ color:var(--muted); margin:0 0 22px; }
+    section{ background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:24px 26px; margin:0 0 24px; }
+    section>h2{ margin-top:0; font-size:20px; }
+    h3{ font-size:15.5px; margin:22px 0 8px; border-left:3px solid var(--blue); padding-left:9px; }
+    p{ margin:8px 0; }
+    code{ background:var(--soft); padding:1px 5px; border-radius:5px; font-family:"SFMono-Regular",Consolas,monospace; font-size:12.5px; }
+    table{ width:100%; border-collapse:collapse; margin:10px 0; font-size:12.5px; }
+    th,td{ border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
+    th{ background:var(--soft); font-weight:600; }
+    td.col{ font-family:"SFMono-Regular",Consolas,monospace; font-weight:600; white-space:nowrap; }
+    td.ty{ font-family:"SFMono-Regular",Consolas,monospace; color:var(--muted); white-space:nowrap; }
+    td.fcell div{ margin:3px 0; line-height:1.95; }
+    td.fcell .g{ display:inline-block; min-width:78px; color:var(--muted); font-size:11px; font-weight:600; vertical-align:top; }
+    td.fcell code{ display:inline-block; margin:1px 2px; }
+    .pk{ color:var(--blue); font-weight:700; }
+    .meta{ font-size:12px; color:var(--muted); margin:4px 0 0; } .meta b{ color:var(--ink); }
+    .formula{ background:var(--code-bg); color:var(--code-ink); border-radius:10px; padding:14px 16px; margin:10px 0;
+      font-family:"SFMono-Regular",Consolas,monospace; font-size:12.6px; overflow-x:auto; line-height:1.7; white-space:pre; }
+    .formula .c{ color:#94a3b8; } .formula .k{ color:#7dd3fc; }
+    .note{ background:#fffbeb; border:1px solid #fde68a; border-radius:9px; padding:10px 14px; margin:12px 0; font-size:13px; color:#78350f; }
+    .term{ border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin:10px 0; }
+    .term h4{ margin:0 0 4px; font-size:14px; } .term p{ margin:4px 0; font-size:13px; }
+    .endpoint{ font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; color:var(--muted); }
+    .m-get{ color:var(--green); font-weight:700; } .m-post{ color:var(--blue); font-weight:700; }
+    .mermaid{ background:#fbfcfe; border:1px solid var(--line); border-radius:10px; padding:16px; margin:12px 0; text-align:center; }
+    @media (max-width:980px){ .layout{ grid-template-columns:1fr; } nav{ position:static; height:auto; } }
+  </style>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad:true, theme:'neutral', securityLevel:'loose', flowchart:{useMaxWidth:true} });
+  </script>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <div class="brand">Sunrise Audience</div>
+    <div class="sub">기능 · UML · DB 명세 · 용어</div>
+    <h2>기능</h2>
+    <a href="#roles">기능과 역할</a>
+    <a href="#endpoints">엔드포인트</a>
+    <a href="#dsl">조건 DSL</a>
+    <a href="#backfill">profile feature 백필</a>
+    <a href="#scores">예측 score 조건</a>
+    <h2>구조</h2>
+    <a href="#layers">계층 구조</a>
+    <a href="#uml">클래스 다이어그램(UML)</a>
+    <a href="#seq-preview">시퀀스: preview</a>
+    <a href="#seq-materialize">시퀀스: materialize</a>
+    <a href="#seq-eval">DSL 평가 흐름</a>
+    <h2>DB 명세서</h2>
+    <a href="#db">audience_materializations</a>
+    <a href="#reads">읽는 테이블 · 의존</a>
+    <h2>용어집</h2>
+    <a href="#glossary">DSL 외 용어</a>
+  </nav>
+
+  <main>
+    <h1>Audience — 기능·UML·DB 명세서·용어집</h1>
+    <p class="lede"><code>app/audience/</code>의 기능과 역할, 클래스 다이어그램·시퀀스, DB 명세서, 조건 DSL을 포함한 용어 설명입니다. 모든 내용은 현재 구현(<code>templates.py</code>·<code>preview.py</code>·<code>http.py</code>·migration 0004) 기준입니다.</p>
+
+    <!-- ROLES -->
+    <section id="roles">
+      <h2>1. Audience 기능과 역할</h2>
+      <p>Audience는 마케터가 <b>"지금 공략할 고객 집단"을 정의·산출</b>하도록 돕는 영역입니다. 바로 쓰는 표준 템플릿 카탈로그를 제공하고, 조건 DSL로 모수를 실시간 미리보기(preview)하며, 확정된 대상자를 캠페인이 참조할 read model로 저장(materialize)합니다.</p>
+      <table>
+        <tr><th>기능</th><th>역할(무엇을 하나)</th><th>핵심 산출</th></tr>
+        <tr><td>템플릿 카탈로그</td><td>이커머스 표준 오디언스를 바로 사용</td><td>58개 템플릿(11개 카테고리), category/query 필터</td></tr>
+        <tr><td>템플릿 상세</td><td>단일 템플릿의 조건 계약 확인</td><td>rule(DSL) + 추천 채널/trigger/tag + evaluable</td></tr>
+        <tr><td>preview(미리보기)</td><td>조건 변경 시 예상 모수 즉시 확인</td><td>matched_count · sample · unsupported · rule_hash</td></tr>
+        <tr><td>materialize(확정)</td><td>대상자 집합을 캠페인 연결용으로 고정</td><td>audience_id read model(member_count·rule_hash)</td></tr>
+        <tr><td>조건 DSL</td><td>이벤트·프로필·예측 score를 트리로 조합</td><td>all/any × event_count/profile/score</td></tr>
+        <tr><td>예측 score 조건</td><td>구매가능성 등 ML 점수로 타게팅</td><td>purchase_score·churn_risk·affinity 조건</td></tr>
+      </table>
+      <p class="meta"><b>카테고리(11)</b> — acquisition · browse · cart · channel · churn · experiment · loyalty · prediction · purchase · retention · value. <b>설계</b> — 모든 조회 tenant 격리, preview는 단기 TTL 캐시, materialize는 멱등 upsert, 미지원 조건은 명시적으로 노출(빈 모수 silent 금지).</p>
+    </section>
+
+    <!-- ENDPOINTS -->
+    <section id="endpoints">
+      <h2>2. 엔드포인트</h2>
+      <table>
+        <tr><th>메서드 · 경로</th><th>설명</th><th>입력</th></tr>
+        <tr><td class="endpoint"><span class="m-get">GET</span> /v1/audiences/templates</td><td>템플릿 목록(필터)</td><td>?category= &amp; ?query=</td></tr>
+        <tr><td class="endpoint"><span class="m-get">GET</span> /v1/audiences/templates/{id}</td><td>템플릿 상세(404 가능)</td><td>path id</td></tr>
+        <tr><td class="endpoint"><span class="m-post">POST</span> /v1/audiences/preview</td><td>rule|template_id 평가 → 모수</td><td>body{template_id?, rule?, sample_limit} · ?start &amp; ?end</td></tr>
+        <tr><td class="endpoint"><span class="m-post">POST</span> /v1/audiences/materialize</td><td>평가 결과를 audience_id로 저장</td><td>body{audience_id, template_id?, rule?, sample_limit} · window</td></tr>
+      </table>
+    </section>
+
+    <!-- DSL -->
+    <section id="dsl">
+      <h2>3. 조건 DSL</h2>
+      <p>오디언스 조건은 <b>중첩 가능한 규칙 트리</b>입니다. <code>all</code>(AND)/<code>any</code>(OR) 아래에 3종 조건을 조합합니다.</p>
+      <div class="formula"><span class="c"># 트리 구조</span>
+{ "<span class="k">all</span>": [ 조건 | 하위트리, ... ] }     <span class="c"># 모두 만족(AND)</span>
+{ "<span class="k">any</span>": [ 조건 | 하위트리, ... ] }     <span class="c"># 하나라도(OR)</span>
+
+<span class="c"># 조건 타입 3종</span>
+{ "type":"<span class="k">event_count</span>", "event":"cart_add", "window_days":7, "op":"gte", "value":1 }
+{ "type":"<span class="k">profile</span>",     "field":"days_since_last_purchase", "op":"gte", "value":30 }
+{ "type":"<span class="k">score</span>",       "name":"purchase_score", "op":"gte", "value":0.6 }
+
+<span class="c"># 연산자(op)</span>
+eq · in · gte · gt · lte · lt          <span class="c"># in 은 집합 포함</span>
+
+<span class="c"># event_count: window_days 지정 시 [end − window_days, end] 하위 윈도우만 카운트</span>
+<span class="c"># rule_hash = sha256(canonical_json(rule))  → preview 캐시 키 · materialize 식별</span></div>
+      <table>
+        <tr><th>조건 타입</th><th>평가 대상</th><th>예시</th></tr>
+        <tr><td>event_count</td><td>방문자의 특정 이벤트 횟수(window_days 윈도우)</td><td>최근 7일 cart_add ≥ 1</td></tr>
+        <tr><td>profile</td><td>방문자 집계/파생 필드(구매수·매출·최근성·상품가치 등)</td><td>days_since_last_purchase ≥ 30</td></tr>
+        <tr><td>score</td><td>예측 모델 아티팩트 점수</td><td>purchase_score ≥ 0.6</td></tr>
+      </table>
+    </section>
+
+    <!-- BACKFILL -->
+    <section id="backfill">
+      <h2>4. profile feature 백필 (3계층)</h2>
+      <p>preview는 기간 이벤트와 상품 feature를 방문자별로 집계해 profile 필드를 만듭니다. 데이터 출처에 따라 3계층으로 나뉘며, 외부 소스가 필요한 필드는 평가 불가로 <b>명시</b>됩니다.</p>
+      <table>
+        <tr><th style="width:140px">계층</th><th>필드(예)</th><th style="width:150px">출처</th></tr>
+        <tr>
+          <td>① 이벤트 도출</td>
+          <td class="fcell">
+            <div><span class="g">집계</span><code>purchase_count</code> <code>total_revenue</code> <code>avg_order_value</code> <code>view_count</code> <code>cart_add_count</code></div>
+            <div><span class="g">최근성</span><code>first_seen_days_ago</code> <code>days_since_last_seen</code> <code>days_since_last_purchase</code></div>
+            <div><span class="g">파생점수</span><code>category_purchase_count</code> <code>cross_sell_score</code> <code>engagement_score</code></div>
+            <div><span class="g">주기·가치</span><code>expected_repurchase_days</code> <code>recent_campaign_exposure_days</code> <code>lifetime_value</code></div>
+          </td>
+          <td>events 집계</td>
+        </tr>
+        <tr>
+          <td>② 상품 feature join</td>
+          <td class="fcell">
+            <div><span class="g">구매 count</span><code>full_price_purchase_count</code> <code>high_margin_purchase_count</code></div>
+            <div><span class="g">가치 비율</span><code>discount_affinity</code> <code>premium_affinity</code> <code>return_rate</code></div>
+          </td>
+          <td>events × product_features</td>
+        </tr>
+        <tr>
+          <td>③ 외부 소스 필요<br/>(미지원)</td>
+          <td class="fcell">
+            <div><span class="g">동의·검증</span><code>kakao_opt_in</code> <code>email_opt_in</code> <code>sms_opt_in</code> <code>email_verified</code> <code>phone_verified</code></div>
+            <div><span class="g">쿠폰</span><code>coupon_affinity</code> <code>coupon_purchase_count</code> <code>coupon_usage_rate</code></div>
+            <div><span class="g">배송·리뷰</span><code>free_shipping_affinity</code> <code>free_shipping_gap</code> <code>review_written</code></div>
+          </td>
+          <td>consent / 쿠폰 / 배송 store (연동 필요)</td>
+        </tr>
+      </table>
+      <div class="note">①②는 지원(평가 가능). ③ 외부 필드를 참조하는 템플릿은 카탈로그 응답의 <code>evaluable=false</code> + <code>external_fields</code>로, preview 응답의 <code>unsupported_conditions</code>로 노출됩니다. 현재 58개 중 49개가 평가 가능.</div>
+    </section>
+
+    <!-- SCORES -->
+    <section id="scores">
+      <h2>5. 예측 score 조건</h2>
+      <p>score 조건은 예측 모델 아티팩트(<code>prediction_model.json</code>, 모델 레지스트리로 버전 관리)를 로드해 방문자 점수를 산출합니다. Audience와 Prediction이 <b>동일 아티팩트를 공유</b>해 일관성을 유지합니다.</p>
+      <div class="formula">지원 score: purchase_score · churn_risk · category_affinity · product_affinity · next_best_offer
+<span class="c"># 방문자 프로필 → VisitorPredictionFeatures → MultiHeadLogisticPredictionModel</span>
+purchase_score / churn_risk = sigmoid(bias + Σ wᵢ·fᵢ)   <span class="c"># 예측 모듈과 동일 head</span></div>
+    </section>
+
+    <!-- LAYERS -->
+    <section id="layers">
+      <h2>6. 계층 구조</h2>
+      <p><code>domain ← application ← adapters</code>. 카탈로그는 정적 도메인 데이터, 평가/저장은 application 유스케이스, HTTP/세션은 adapters.</p>
+      <div class="mermaid">
+flowchart LR
+    HTTP["adapters/http.py<br/>APIRouter(/v1/audiences)"] --> UC["application<br/>templates.py · preview.py"]
+    UC --> DOM["domain/model.py<br/>AudienceTemplate"]
+    UC -. 읽기 .-> EV[("events")]
+    UC -. 읽기 .-> PF[("product_features")]
+    UC -. 점수 .-> PM["Prediction 아티팩트"]
+    UC -. 쓰기 .-> AM[("audience_materializations")]
+    HTTP -. 캐시 .-> RD[("Redis preview cache")]
+      </div>
+    </section>
+
+    <!-- UML -->
+    <section id="uml">
+      <h2>7. 클래스 다이어그램 (UML)</h2>
+      <div class="mermaid">
+classDiagram
+    class AudienceTemplate {
+      +template_id
+      +name
+      +category
+      +rule
+      +recommended_channels
+      +recommended_trigger
+      +tags
+    }
+    class ListAudienceTemplates {
+      +execute(category, query) List~AudienceTemplate~
+    }
+    class GetAudienceTemplate {
+      +execute(template_id) AudienceTemplate
+    }
+    class AudienceRuleEvaluator {
+      -AsyncSession session
+      -PredictionModelArtifact model
+      +preview(tenant, rule, start, end, sample_limit) AudiencePreview
+      +materialize(tenant, audience_id, rule, start, end) AudienceMaterialization
+    }
+    class AudiencePreview {
+      +rule_hash
+      +matched_count
+      +sample_visitor_ids
+      +unsupported_conditions
+      +evaluated_at
+    }
+    class AudienceMaterialization {
+      +audience_id
+      +rule_hash
+      +member_count
+      +sample_visitor_ids
+      +status
+      +as_of
+    }
+    ListAudienceTemplates ..> AudienceTemplate
+    GetAudienceTemplate ..> AudienceTemplate
+    AudienceRuleEvaluator ..> AudiencePreview
+    AudienceRuleEvaluator ..> AudienceMaterialization
+    AudienceRuleEvaluator ..> EventRow
+    AudienceRuleEvaluator ..> ProductFeatureRow
+    AudienceRuleEvaluator ..> PredictionModelArtifact
+    AudienceRuleEvaluator ..> AudienceMaterializationRow
+      </div>
+      <div class="note">규칙 평가는 모듈 함수 <code>_evaluate_rule</code>/<code>_evaluate_condition</code>/<code>_compare</code>(재귀 트리), feature/score 산출은 <code>_build_features</code>/<code>_build_scores</code>, 상품 feature 로드는 <code>_load_product_features</code>로 분리되어 있습니다.</div>
+    </section>
+
+    <!-- SEQ PREVIEW -->
+    <section id="seq-preview">
+      <h2>8. 시퀀스 — preview</h2>
+      <div class="mermaid">
+sequenceDiagram
+    participant U as Console
+    participant API as /preview
+    participant RR as resolve_rule
+    participant C as Cache(Redis)
+    participant R as AudienceRuleEvaluator
+    participant DB as events + product_features
+    participant PM as Prediction 모델
+    U->>API: {template_id|rule, sample_limit} + start/end
+    API->>RR: resolve_rule(template_id, rule)
+    API->>C: get(key = ...:preview:win:limit:rule_hash)
+    alt cache hit
+        C-->>API: 캐시된 응답
+    else miss
+        API->>R: preview(tenant, rule, start, end)
+        R->>DB: 기간 이벤트 + 상품 feature 조회
+        R->>R: 방문자별 집계 → _build_features
+        R->>PM: score 조건 시 _build_scores
+        R->>R: _evaluate_rule(all/any 트리)
+        R-->>API: matched_count·sample·unsupported·rule_hash
+        API->>C: set(key, ttl)
+    end
+    API-->>U: AudiencePreviewResponse
+      </div>
+    </section>
+
+    <!-- SEQ MATERIALIZE -->
+    <section id="seq-materialize">
+      <h2>9. 시퀀스 — materialize</h2>
+      <div class="mermaid">
+sequenceDiagram
+    participant Op as Console/Campaign
+    participant API as /materialize
+    participant R as AudienceRuleEvaluator
+    participant T as audience_materializations
+    Op->>API: {audience_id, rule|template_id} + window
+    API->>R: materialize(tenant, audience_id, rule, ...)
+    R->>R: preview() 재사용 → matched 집합
+    R->>T: upsert(tenant, audience_id)<br/>rule_hash·rule_json·member_count·sample·status=active
+    R-->>API: AudienceMaterialization
+    API-->>Op: audience_id·member_count·status
+    Note over T: 캠페인 서비스가 audience_id 로 대상자 read model 참조
+      </div>
+    </section>
+
+    <!-- SEQ EVAL -->
+    <section id="seq-eval">
+      <h2>10. DSL 평가 흐름</h2>
+      <div class="mermaid">
+flowchart TB
+    R["rule"] --> T{"all? / any?"}
+    T -->|all| ALL["모든 하위 조건 AND"]
+    T -->|any| ANY["하위 조건 OR"]
+    ALL --> COND{"조건 type"}
+    ANY --> COND
+    COND -->|event_count| EC["window_days 내 이벤트 카운트"]
+    COND -->|profile| PR{"필드 지원?"}
+    COND -->|score| SC["예측 점수 산출"]
+    PR -->|미지원| UNS["unsupported_conditions += 'profile:field' → False"]
+    PR -->|지원| CMP["_compare(actual, op, value)"]
+    EC --> CMP
+    SC --> CMP
+    CMP --> MATCH["방문자 매칭 여부"]
+      </div>
+    </section>
+
+    <!-- DB -->
+    <section id="db">
+      <h2>11. DB 명세서 — audience_materializations <span class="endpoint">migration 0004</span></h2>
+      <p>materialize가 생성하는 <b>오디언스 read model</b>. 캠페인 서비스가 <code>audience_id</code>로 대상자 집합·조건을 참조합니다. 같은 <code>(tenant_id, audience_id)</code>는 1건(upsert).</p>
+      <p class="meta"><b>PK</b> id · <b>UNIQUE</b> (tenant_id, audience_id) <code>uq_audience_materialization</code> · <b>INDEX</b> (tenant_id, status)</p>
+      <table>
+        <tr><th>컬럼</th><th>타입(PG / SQLite)</th><th>NULL</th><th>설명</th></tr>
+        <tr><td class="col pk">id</td><td class="ty">BIGINT / INTEGER</td><td>N</td><td>PK, auto-increment</td></tr>
+        <tr><td class="col">tenant_id</td><td class="ty">VARCHAR(64)</td><td>N</td><td>테넌트</td></tr>
+        <tr><td class="col">audience_id</td><td class="ty">VARCHAR(128)</td><td>N</td><td>오디언스 식별자(캠페인 연결 키)</td></tr>
+        <tr><td class="col">rule_hash</td><td class="ty">VARCHAR(64)</td><td>N</td><td>조건 DSL의 sha256 해시(동일 조건 식별)</td></tr>
+        <tr><td class="col">rule_json</td><td class="ty">TEXT</td><td>N</td><td>조건 DSL canonical JSON(재평가/감사용)</td></tr>
+        <tr><td class="col">member_count</td><td class="ty">INTEGER</td><td>N</td><td>매칭 모수(matched_count)</td></tr>
+        <tr><td class="col">sample_visitor_ids_json</td><td class="ty">TEXT</td><td>N</td><td>샘플 방문자 ID 목록 JSON</td></tr>
+        <tr><td class="col">status</td><td class="ty">VARCHAR(32)</td><td>N</td><td>active(생성 시)</td></tr>
+        <tr><td class="col">as_of</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>평가 기준 시각(evaluated_at)</td></tr>
+        <tr><td class="col">created_at</td><td class="ty">TIMESTAMPTZ</td><td>N</td><td>저장 시각</td></tr>
+      </table>
+    </section>
+
+    <!-- READS -->
+    <section id="reads">
+      <h2>12. 읽는 테이블 · 의존</h2>
+      <table>
+        <tr><th>대상</th><th>용도</th><th>비고</th></tr>
+        <tr><td><code>events</code></td><td>방문자별 이벤트 집계(event_count·profile 도출)</td><td>명세는 analytics-db-spec 참조</td></tr>
+        <tr><td><code>product_features</code></td><td>상품 가치 join(discount/premium/return_rate 등)</td><td>recommendation /products로 적재</td></tr>
+        <tr><td>Prediction 아티팩트</td><td>score 조건 점수 산출</td><td>모델 레지스트리(tenant production→seed)로 로드</td></tr>
+        <tr><td>Redis</td><td>preview 응답 단기 TTL 캐시</td><td>키에 rule_hash 포함</td></tr>
+      </table>
+      <div class="note">Audience는 자체 테이블(<code>audience_materializations</code>) 1개를 쓰고, 평가 입력은 events·product_features·예측 아티팩트를 읽습니다. 즉 "쓰기 1 / 읽기 다수" 구조입니다.</div>
+    </section>
+
+    <!-- GLOSSARY -->
+    <section id="glossary">
+      <h2>13. 용어집</h2>
+
+      <div class="term"><h4>오디언스 템플릿 (Audience Template)</h4>
+        <p>바로 사용할 수 있는 표준 고객 세그먼트 정의. <code>template_id·name·category·rule(DSL)·추천 채널·추천 trigger·tags</code>로 구성. 카탈로그 버전은 <code>audience-template-catalog.v1</code>, 현재 58개.</p></div>
+
+      <div class="term"><h4>조건 DSL · 규칙 트리 (rule tree)</h4>
+        <p>오디언스 조건을 표현하는 중첩 구조. <code>all</code>(AND)/<code>any</code>(OR) 노드 아래에 조건을 둡니다. 단순 enum 필터가 아니라 방문 빈도·구매 이력·상품 관심·ML 점수를 자유 조합할 수 있습니다.</p></div>
+
+      <div class="term"><h4>조건 타입: event_count / profile / score</h4>
+        <p><b>event_count</b>: 특정 이벤트 횟수(window_days 윈도우). <b>profile</b>: 방문자 집계/파생 필드. <b>score</b>: 예측 모델 점수. 각 조건은 <code>op</code>(eq·in·gte·gt·lte·lt)와 <code>value</code>로 비교합니다.</p></div>
+
+      <div class="term"><h4>window_days</h4>
+        <p>event_count 조건의 시간 창. 지정 시 <code>[end − window_days, end]</code> 하위 윈도우 내 이벤트만 셉니다(예: "24시간 이탈" vs "7일 이탈" 구분). API 윈도우(start/end)와 별개로 조건 단위로 적용.</p></div>
+
+      <div class="term"><h4>preview (미리보기) · matched_count · sample_visitor_ids</h4>
+        <p>조건을 실데이터로 평가해 <b>예상 모수</b>를 즉시 반환. <code>matched_count</code>(매칭 인원), <code>sample_visitor_ids</code>(샘플 ID), <code>unsupported_conditions</code>를 포함. 단기 TTL 캐시(키에 rule_hash).</p></div>
+
+      <div class="term"><h4>materialize (확정) · audience_id · member_count</h4>
+        <p>평가 결과를 <b>read model</b>(<code>audience_materializations</code>)로 저장해 캠페인이 참조. <code>audience_id</code>로 식별, <code>member_count</code>는 확정 시점 모수. 같은 (tenant, audience_id)는 멱등 upsert.</p></div>
+
+      <div class="term"><h4>rule_hash</h4>
+        <p>조건 DSL을 정규화(canonical JSON)해 만든 <code>sha256</code> 해시. 동일 조건을 식별하는 키로, preview 캐시 키와 materialize 행에 저장됩니다.</p></div>
+
+      <div class="term"><h4>unsupported_conditions</h4>
+        <p>이 배포에서 평가할 수 없는 조건 목록(예: <code>profile:kakao_opt_in</code>). 해당 조건은 <b>False로 처리</b>하되 결과에 명시해, "빈 모수"의 원인을 조용히 숨기지 않습니다.</p></div>
+
+      <div class="term"><h4>evaluable · external_fields (카탈로그 메타)</h4>
+        <p>템플릿이 외부 소스 전용 필드를 참조하는지 여부. <code>external_fields</code>가 비어 있으면 <code>evaluable=true</code>(현 배포에서 실모수 평가 가능). 콘솔이 "평가 불가" 템플릿을 구분하는 데 사용.</p></div>
+
+      <div class="term"><h4>profile feature 백필 (3계층)</h4>
+        <p>profile 필드의 출처 분류 — ① 이벤트 도출, ② 상품 feature join, ③ 외부 소스(consent/쿠폰/배송). ①②는 지원, ③은 미지원으로 명시. 백필 확대로 평가 가능 템플릿이 늘어납니다(현재 49/58).</p></div>
+
+      <div class="term"><h4>예측 score 조건</h4>
+        <p>구매가능성(purchase_score)·이탈위험(churn_risk)·상품반응(affinity) 등 ML 점수를 오디언스 조건으로 사용. Prediction과 동일한 모델 아티팩트를 공유해 점수 일관성을 보장합니다.</p></div>
+
+      <div class="term"><h4>category / query 필터</h4>
+        <p>템플릿 목록 필터. <code>category</code>는 정확 일치, <code>query</code>는 name/description/tags에 대한 부분 일치(casefold). 11개 카테고리(acquisition·browse·cart·channel·churn·experiment·loyalty·prediction·purchase·retention·value).</p></div>
+
+      <div class="term"><h4>as_of · status</h4>
+        <p><b>as_of</b>: 오디언스를 평가한 기준 시각(evaluated_at). <b>status</b>: 현재 materialize 시 <code>active</code>로 저장(향후 scheduled refresh/만료 확장 여지).</p></div>
+
+      <div class="term"><h4>read model (참고)</h4>
+        <p>조회/소비에 최적화해 미리 만들어 둔 데이터. <code>audience_materializations</code>는 캠페인이 대상자 집합을 빠르게 참조하기 위한 audience read model입니다. (자세한 정의는 analytics 용어집 참조.)</p></div>
+
+      <div class="term"><h4>Port / Adapter (참고)</h4>
+        <p>Audience는 단순 카탈로그+평가라 별도 Repository 포트 없이, 유스케이스가 <code>AsyncSession</code>으로 직접 events/product_features를 읽고 <code>audience_materializations</code>에 씁니다. 예측 점수만 Prediction 아티팩트(레지스트리)에 의존.</p></div>
+    </section>
+  </main>
+</div>
+</body>
+</html>
